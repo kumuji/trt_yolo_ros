@@ -1,31 +1,16 @@
 #!/usr/bin/env python
 from __future__ import division, print_function
 
-import datetime
+import time
 
 import rospy
 from cv_bridge import CvBridge, CvBridgeError
 from darknet_ros_msgs.msg import BoundingBox, BoundingBoxes
 from sensor_msgs.msg import Image
-import time
 
 import numpy as np
-from trt_package.detector import DarknetTRT
-
 import pycuda.driver as cuda
-
-
-def timeit(method):
-    def timed(*args, **kw):
-        ts = time.time()
-        result = method(*args, **kw)
-        te = time.time()
-        print(
-            "{} execution time: {:2.2f} ms".format(method.__name__, ((te - ts) * 1000))
-        )
-        return result
-
-    return timed
+from trt_package.detector import DarknetTRT
 
 
 class Detector(object):
@@ -97,7 +82,7 @@ class Detector(object):
     def process_frame(self):
         start_time = rospy.get_rostime()
         last_publish = rospy.get_rostime()
-        rospy.loginfo("[detector] processing frame")
+        rospy.logdebug("[detector] processing frame")
 
         # Initialize detection results
         detection_results = BoundingBoxes()
@@ -123,7 +108,7 @@ class Detector(object):
                 detection_results.bounding_boxes.append(detection_msg)
 
         try:
-            rospy.loginfo("[detector] publishing")
+            rospy.logdebug("[detector] publishing")
             self._pub.publish(detection_results)
             if self.publish_image:
                 self._pub_viz.publish(
@@ -133,7 +118,7 @@ class Detector(object):
         except CvBridgeError as e:
             print(e)
         delay = (last_publish.nsecs - start_time.nsecs) / 1000000
-        rospy.loginfo("[detector] interference time for callback[ms]={}".format(delay))
+        rospy.logdebug("[detector] interference time for callback[ms]={}".format(delay))
 
 
 if __name__ == "__main__":

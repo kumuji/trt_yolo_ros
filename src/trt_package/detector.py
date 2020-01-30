@@ -1,30 +1,16 @@
 from __future__ import division, print_function
 
 import os
+import time
 
-from PIL import ImageDraw, Image
+from PIL import Image, ImageDraw
 
 import cv2
-import numpy as np
-import tensorrt as trt
-
-import pycuda.driver as cuda
-import pycuda.autoinit
-import time
 import numba
-
-
-def timeit(method):
-    def timed(*args, **kw):
-        ts = time.time()
-        result = method(*args, **kw)
-        te = time.time()
-        print(
-            "{} execution time: {:2.2f} ms".format(method.__name__, ((te - ts) * 1000))
-        )
-        return result
-
-    return timed
+import numpy as np
+import pycuda.autoinit
+import pycuda.driver as cuda
+import tensorrt as trt
 
 
 class DarknetTRT(object):
@@ -75,7 +61,6 @@ class DarknetTRT(object):
         self.engine = self.get_engine(onnx_engine, trt_engine)
         self.inputs, self.outputs, self.bindings, self.stream = self._allocate_buffers()
 
-    @timeit
     def __call__(self, image):
         image, image_processed = self.image_preparation(image)
         shape_orig_WH = image.shape
@@ -109,7 +94,6 @@ class DarknetTRT(object):
             )
         return boxes, classes, scores, obj_detected_img
 
-    @timeit
     def get_engine(self, onnx_file_path, engine_file_path):
         """Attempts to load a serialized engine if available, otherwise builds a new TensorRT engine and saves it."""
 
@@ -156,38 +140,6 @@ class DarknetTRT(object):
         else:
             build_engine(onnx_file_path)
 
-    @timeit
-    def _allocate_buffers(self):
-        inputs = []
-        outputs = []
-        bindings = []
-        stream = cuda.Stream()
-        for binding in self.engine:
-            size = (
-                trt.volume(self.engine.get_binding_shape(binding))
-                * self.engine.max_batch_size
-            )
-            dtype = trt.nptype(self.engine.get_binding_dtype(binding))
-            host_mem = cuda.pagelocked_empty(size, dtype)
-            device_mem = cuda.mem_alloc(host_mem.nbytes)
-            bindings.append(int(device_mem))
-            if self.engine.binding_is_input(binding):
-                inputs.append(HostDeviceMem(host_mem, device_mem))
-            else:
-                outputs.append(HostDeviceMem(host_mem, device_mem))
-        return inputs, outputs, bindings, stream
-
-    @staticmethod
-    def do_inference(context, bindings, inputs, outputs, stream, batch_size=1):
-        [cuda.memcpy_htod_async(inp.device, inp.host, stream) for inp in inputs]
-        context.execute_async(
-            batch_size=batch_size, bindings=bindings, stream_handle=stream.handle
-        )
-        [cuda.memcpy_dtoh_async(out.host, out.device, stream) for out in outputs]
-        stream.synchronize()
-        return [out.host for out in outputs]
-
-    @timeit
     def image_preparation(self, img_raw):
         """ Extract image and shape """
         height, width, channels = img_raw.shape
@@ -225,7 +177,6 @@ class DarknetTRT(object):
         input_img = np.array(input_img, dtype=np.float32, order="C")
         return img_raw, input_img
 
-    @timeit
     def draw_bboxes(
         self,
         image_raw,
@@ -286,7 +237,6 @@ class HostDeviceMem(object):
 class PostprocessYOLO(object):
     """Class for post-processing the three outputs tensors from YOLOv3-608."""
 
-    @timeit
     def __init__(
         self,
         yolo_masks,
@@ -313,7 +263,6 @@ class PostprocessYOLO(object):
         self.nms_threshold = nms_threshold
         self.input_resolution_yolo = yolo_input_resolution
 
-    @timeit
     def process(self, outputs, resolution_raw):
         """Take the YOLOv3 outputs generated from a TensorRT forward pass, post-process them
         and return a list of bounding boxes for detected object together with their category
@@ -333,7 +282,6 @@ class PostprocessYOLO(object):
 
         return boxes, categories, confidences
 
-    @timeit
     def _reshape_output(self, output):
         """Reshape a TensorRT output from NCHW to NHWC format (with expected C=255),
         and then return it in (height,width,3,85) dimensionality after further reshaping.
@@ -349,7 +297,6 @@ class PostprocessYOLO(object):
         dim4 = 4 + 1 + 80
         return np.reshape(output, (dim1, dim2, dim3, dim4))
 
-    @timeit
     def _process_yolo_output(self, outputs_reshaped, resolution_raw):
         """Take in a list of three reshaped YOLO outputs in (height,width,3,85) shape and return
         return a list of bounding boxes for detected object together with their category and their
@@ -446,7 +393,6 @@ class PostprocessYOLO(object):
         # class confidence
         return boxes, box_confidence, box_class_probs
 
-    @timeit
     def _filter_boxes(self, boxes, box_confidences, box_class_probs):
         """Take in the unfiltered bounding box descriptors and discard each cell
         whose score is lower than the object threshold set during class initialization.
@@ -470,7 +416,6 @@ class PostprocessYOLO(object):
 
         return boxes, classes, scores
 
-    @timeit
     def _nms_boxes(self, boxes, box_confidences):
         """Apply the Non-Maximum Suppression (NMS) algorithm on the bounding boxes with their
         confidence scores and return an array with the indexes of the bounding boxes we want to
