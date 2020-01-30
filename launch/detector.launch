@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+    <!-- Camera topic and weights, config and classes files -->
+    <arg name =      "image_topic" default = "/camera/color/image_raw"/>
+    <arg name =      "config_path" default = "$(find detector)/config/yolov3.cfg"/>
+    <arg name =       "lable_path" default = "$(find detector)/weights/coco_labels.txt"/>
+    <arg name =     "weights_path" default = "$(find detector)/weights/yolov3.weights"/>
+    <arg name =  "trt_engine_path" default = "$(find detector)/weights/yolov3.engine"/>
+    <arg name = "onnx_engine_path" default = "$(find detector)/weights/yolov3.onnx"/>
+    <!-- yolo detector parameters -->
+    <!-- obj-threshold is confidence threshold -->
+    <arg name =    "obj_threshold" default = "0.6"/>
+    <arg name =    "nms_threshold" default = "0.7"/>
+    <!-- Published topics -->
+    <!-- publishing image topic might cause loose in performance -->
+    <arg name=          "publish_image" default= "true"/>
+    <arg name= "detected_objects_topic" default= "/detector/bounding_boxes"/>
+    <arg name= "detections_image_topic" default= "/detector/image/bounding_boxes"/>
+
+    <!-- Node -->
+    <node name="detector" pkg="detector" type="node.py" output="screen" respawn="true">
+        <param name =            "image_topic" value = "$(arg image_topic)"/>
+        <param name =            "config_path" value = "$(arg config_path)"/>
+        <param name =             "lable_path" value = "$(arg lable_path)"/>
+        <param name =           "weights_path" value = "$(arg weights_path)"/>
+        <param name =        "trt_engine_path" value = "$(arg trt_engine_path)"/>
+        <param name =       "onnx_engine_path" value = "$(arg onnx_engine_path)"/>
+        <param name =          "obj_threshold" value = "$(arg obj_threshold)"/>
+        <param name =          "nms_threshold" value = "$(arg nms_threshold)"/>
+        <param name = "detections_image_topic" value = "$(arg detections_image_topic)"/>
+        <param name = "detected_objects_topic" value = "$(arg detected_objects_topic)"/>
+        <param name =          "publish_image" value = "$(arg publish_image)"/>
+    </node>
+
+</launch>
