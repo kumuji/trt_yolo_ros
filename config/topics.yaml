@@ -1,0 +1,15 @@
+publisher:
+    word:
+        topic: /output_string
+        queue_size: 1
+        latch: false
+
+    image:
+        topic: /output_image
+        queue_size: 1
+        latch: false
+
+subscriber:
+    image:
+        topic: /input_image
+        queue_size: 1

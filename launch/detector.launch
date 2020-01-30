@@ -3,7 +3,7 @@
     <!-- Camera topic and weights, config and classes files -->
     <arg name =      "image_topic" default = "/camera/color/image_raw"/>
     <arg name =      "config_path" default = "$(find detector)/config/yolov3.cfg"/>
-    <arg name =       "lable_path" default = "$(find detector)/weights/coco_labels.txt"/>
+    <arg name =       "label_path" default = "$(find detector)/config/coco_labels.txt"/>
     <arg name =     "weights_path" default = "$(find detector)/weights/yolov3.weights"/>
     <arg name =  "trt_engine_path" default = "$(find detector)/weights/yolov3.engine"/>
     <arg name = "onnx_engine_path" default = "$(find detector)/weights/yolov3.onnx"/>
@@ -21,7 +21,7 @@
     <node name="detector" pkg="detector" type="node.py" output="screen" respawn="true">
         <param name =            "image_topic" value = "$(arg image_topic)"/>
         <param name =            "config_path" value = "$(arg config_path)"/>
-        <param name =             "lable_path" value = "$(arg lable_path)"/>
+        <param name =             "label_path" value = "$(arg label_path)"/>
         <param name =           "weights_path" value = "$(arg weights_path)"/>
         <param name =        "trt_engine_path" value = "$(arg trt_engine_path)"/>
         <param name =       "onnx_engine_path" value = "$(arg onnx_engine_path)"/>

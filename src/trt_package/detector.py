@@ -55,14 +55,14 @@ class DarknetTRT(object):
         }
         self.postprocessor = PostprocessYOLO(**postprocessor_args)
         self.all_categories = [line.rstrip("\n") for line in open(label_file_path)]
+        self.classes_colors = {}
         self.trt_logger = trt.Logger()
         self.engine = self.get_engine(onnx_engine, trt_engine)
         self.inputs, self.outputs, self.bindings, self.stream = self._allocate_buffers()
         self.context = self.engine.create_execution_context()
 
     def __call__(self, image):
-        image, image_processed = self.image_preparation(image)
-        shape_orig_WH = image.shape
+        h, w, image_processed = self.image_preparation(image)
         # Output shapes expected by the post-processor
         # Do inference with TensorRT
         trt_outputs = []
@@ -81,9 +81,7 @@ class DarknetTRT(object):
         ]
         # Before doing post-processing, we need to reshape the outputs as the do_inference will give us flat arrays.
         # Run the post-processing algorithms on the TensorRT outputs and get the bounding box details of detected objects
-        boxes, classes, scores = self.postprocessor.process(
-            trt_outputs, (shape_orig_WH[:2])
-        )
+        boxes, classes, scores = self.postprocessor.process(trt_outputs, (w, h))
         # Draw the bounding boxes onto the original input image and save it as a PNG file
         obj_detected_img = None
         if self.show_image:
@@ -171,7 +169,6 @@ class DarknetTRT(object):
     def image_preparation(self, img_raw):
         """ Extract image and shape """
         height, width, channels = img_raw.shape
-
         if (height != self.h) or (width != self.w):
             self.h = height
             self.w = width
@@ -203,50 +200,51 @@ class DarknetTRT(object):
         input_img = np.expand_dims(input_img, axis=0)
         # Convert the input_img to row-major order, also known as "C order":
         input_img = np.array(input_img, dtype=np.float32, order="C")
-        return img_raw, input_img
+        return height, width, input_img
 
-    def draw_bboxes(
-        self,
-        image_raw,
-        bboxes,
-        confidences,
-        categories,
-        all_categories,
-        bbox_color="blue",
-    ):
-        """Draw the bounding boxes on the original input image and return it.
-
-        Keyword arguments:
-        image_raw -- a raw PIL Image
-        bboxes -- NumPy array containing the bounding box coordinates of N objects, with shape (N,4).
-        categories -- NumPy array containing the corresponding category for each object,
-        with shape (N,)
-        confidences -- NumPy array containing the corresponding confidence for each object,
-        with shape (N,)
-        all_categories -- a list of all categories in the correct ordered (required for looking up
-        the category name)
-        bbox_color -- an optional string specifying the color of the bounding boxes (default: 'blue')
-        """
-        draw = ImageDraw.Draw(Image.fromarray(image_raw))
+    def draw_bboxes(self, image_raw, bboxes, confidences, categories, all_categories):
         if bboxes is None:
-            return np.array(image_raw)
+            return image_raw
+        # Copy image and visualize
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        fontScale = 0.8
+        thickness = 2
         for box, score, category in zip(bboxes, confidences, categories):
+            label = self.all_categories[category]
             x_coord, y_coord, width, height = box
-            left = max(0, np.floor(x_coord + 0.5).astype(int))
-            top = max(0, np.floor(y_coord + 0.5).astype(int))
-            right = min(image_raw.shape[1], np.floor(x_coord + width + 0.5).astype(int))
-            bottom = min(
-                image_raw.shape[0], np.floor(y_coord + height + 0.5).astype(int)
-            )
+            x_p3 = max(0, np.floor(x_coord + 0.5).astype(int))
+            y_p3 = max(0, np.floor(y_coord + 0.5).astype(int))
+            x_p1 = min(image_raw.shape[1], np.floor(x_coord + width + 0.5).astype(int))
+            y_p1 = min(image_raw.shape[0], np.floor(y_coord + height + 0.5).astype(int))
 
-            draw.rectangle(((left, top), (right, bottom)), outline=bbox_color)
-            draw.text(
-                (left, top - 12),
-                "{0} {1:.2f}".format(all_categories[category], score),
-                fill=bbox_color,
-            )
+            # Find class color
+            if label in self.classes_colors.keys():
+                color = self.classes_colors[label]
+            else:
+                # Generate a new color if first time seen this label
+                color = np.random.randint(0, 255, 3)
+                self.classes_colors[label] = color
 
-        return np.array(image_raw)
+            # Create rectangle
+            cv2.rectangle(
+                image_raw,
+                (int(x_p1), int(y_p1)),
+                (int(x_p3), int(y_p3)),
+                (color[0], color[1], color[2]),
+                thickness,
+            )
+            text = ("{:s}: {:.3f}").format(label, score)
+            cv2.putText(
+                image_raw,
+                text,
+                (int(x_p1), int(y_p1 + 20)),
+                font,
+                fontScale,
+                (255, 255, 255),
+                thickness,
+                cv2.LINE_AA,
+            )
+        return image_raw
 
 
 # Simple helper data class that's a little nicer to use than a 2-tuple.
