@@ -1,15 +1,12 @@
 #!/usr/bin/env python
 from __future__ import division, print_function
 
-import time
-
 import rospy
 from cv_bridge import CvBridge, CvBridgeError
 from darknet_ros_msgs.msg import BoundingBox, BoundingBoxes
 from sensor_msgs.msg import Image
 
 import numpy as np
-import pycuda.driver as cuda
 from trt_package.detector import DarknetTRT
 
 
@@ -25,10 +22,6 @@ class Detector(object):
         self.published_image_topic = rospy.get_param("~detections_image_topic")
 
         self._init()
-        # self.ctx = cuda.Device(self.cuda_device).make_context()
-        # network.ctx.pop()
-        # del network.ctx
-        # del network
         self.model = DarknetTRT(
             obj_threshold=0.6,
             nms_threshold=0.7,

@@ -1,12 +1,10 @@
 from __future__ import division, print_function
 
 import os
-import time
 
 from PIL import Image, ImageDraw
 
 import cv2
-import numba
 import numpy as np
 import pycuda.autoinit
 import pycuda.driver as cuda
@@ -60,6 +58,7 @@ class DarknetTRT(object):
         self.trt_logger = trt.Logger()
         self.engine = self.get_engine(onnx_engine, trt_engine)
         self.inputs, self.outputs, self.bindings, self.stream = self._allocate_buffers()
+        self.context = self.engine.create_execution_context()
 
     def __call__(self, image):
         image, image_processed = self.image_preparation(image)
@@ -67,15 +66,14 @@ class DarknetTRT(object):
         # Output shapes expected by the post-processor
         # Do inference with TensorRT
         trt_outputs = []
-        with self.engine.create_execution_context() as context:
-            self.inputs[0].host = image_processed
-            trt_outputs = self.do_inference(
-                context,
-                bindings=self.bindings,
-                inputs=self.inputs,
-                outputs=self.outputs,
-                stream=self.stream,
-            )
+        self.inputs[0].host = image_processed
+        trt_outputs = self.do_inference(
+            context=self.context,
+            bindings=self.bindings,
+            inputs=self.inputs,
+            outputs=self.outputs,
+            stream=self.stream,
+        )
         # Before doing post-processing, we need to reshape the outputs as the do_inference will give us flat arrays.
         trt_outputs = [
             output.reshape(shape)
@@ -139,6 +137,36 @@ class DarknetTRT(object):
                 return runtime.deserialize_cuda_engine(f.read())
         else:
             build_engine(onnx_file_path)
+
+    def _allocate_buffers(self):
+        inputs = []
+        outputs = []
+        bindings = []
+        stream = cuda.Stream()
+        for binding in self.engine:
+            size = (
+                trt.volume(self.engine.get_binding_shape(binding))
+                * self.engine.max_batch_size
+            )
+            dtype = trt.nptype(self.engine.get_binding_dtype(binding))
+            host_mem = cuda.pagelocked_empty(size, dtype)
+            device_mem = cuda.mem_alloc(host_mem.nbytes)
+            bindings.append(int(device_mem))
+            if self.engine.binding_is_input(binding):
+                inputs.append(HostDeviceMem(host_mem, device_mem))
+            else:
+                outputs.append(HostDeviceMem(host_mem, device_mem))
+        return inputs, outputs, bindings, stream
+
+    @staticmethod
+    def do_inference(context, bindings, inputs, outputs, stream, batch_size=1):
+        [cuda.memcpy_htod_async(inp.device, inp.host, stream) for inp in inputs]
+        context.execute_async(
+            batch_size=batch_size, bindings=bindings, stream_handle=stream.handle
+        )
+        [cuda.memcpy_dtoh_async(out.host, out.device, stream) for out in outputs]
+        stream.synchronize()
+        return [out.host for out in outputs]
 
     def image_preparation(self, img_raw):
         """ Extract image and shape """
@@ -352,7 +380,6 @@ class PostprocessYOLO(object):
 
         return boxes, categories, confidences
 
-    @numba.jit()
     def _process_feats(self, output_reshaped, mask):
         """Take in a reshaped YOLO output in height,width,3,85 format together with its
         corresponding YOLO mask and return the detected bounding boxes, the confidence,
