@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+    <arg name =                "subscriber/image/topic" default = "/camera/color/image_raw"/>
+    <arg name =       "/publisher/bounding_boxes/topic" default = "/detector/bounding_boxes"/>
+    <arg name = "/publisher/bounding_boxes/image/topic" default = "/detector/bounding_boxes/image"/>
+    <arg name =                          "publish_rate" default = "10"/>
+    <arg name =                         "publish_image" default = "false"/>
+    <arg name =                          "weights_path" default = "$(find detector)/weights/"/>
+    <arg name =                           "config_path" default = "$(find detector)/config/"/>
+    <arg name =                        "label_filename" default = "coco_labels.txt"/>
+    <arg name =                         "obj_threshold" default = "0.6"/>
+    <arg name =                         "nms_threshold" default = "0.7"/>
+    <arg name =                           "cuda_device" default = "0"/>
+
+    <!-- Node -->
+    <node name="detector" pkg="detector" type="node.py" output="screen" respawn="true">
+        <param name =                "subscriber/image/topic" value = "$(arg publisher/image/topic)"/>
+        <param name = "/publisher/bounding_boxes/image/topic" value = "$(arg detections_image_topic)"/>
+        <param name =       "/publisher/bounding_boxes/topic" value = "$(arg /publisher/bounding_boxes)"/>
+        <param name =                          "publish_rate" value = "$(arg publish_rate)"/>
+        <param name =                         "publish_image" value = "$(arg publish_image)"/>
+        <param name =                          "weights_path" value = "$(arg weights_path)"/>
+        <param name =                           "config_path" value = "$(arg config_path)"/>
+        <param name =                        "label_filename" value = "$(arg label_filename)"/>
+        <param name =                         "obj_threshold" value = "$(arg obj_threshold)"/>
+        <param name =                         "nms_threshold" value = "$(arg nms_threshold)"/>
+        <param name =                           "cuda_device" value = "$(arg cuda_device)"/>
+    </node>
+
+</launch>

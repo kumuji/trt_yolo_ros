@@ -2,71 +2,70 @@ from __future__ import division, print_function
 
 import os
 
-from PIL import Image, ImageDraw
+import rospy
 
 import cv2
 import numpy as np
-import pycuda.autoinit
+import pycuda.autoinit  # nescessary for initializing cuda cards
 import pycuda.driver as cuda
 import tensorrt as trt
+from utils import read_json
+from yolov3_to_onnx import build_onnx_engine
 
 
 class DarknetTRT(object):
     def __init__(
         self,
-        trt_engine="yolov3.trt",
-        onnx_engine="yolov3.onnx",
         obj_threshold=0.6,
         nms_threshold=0.7,
-        h=608,
-        w=608,
-        label_file_path="coco_labels.txt",
+        yolo_type="yolov3-416",  # also supported v3-tiny
+        weights_path="./weights/",
+        config_path="./config/",
+        label_filename="coco_labels.txt",
+        postprocessor_cfg="yolo_postprocess_config.json",
         cuda_device=0,
         show_image=False,
     ):
         # input to the node node
-        self.h = 0
-        self.w = 0
+        self.yolo_h_w = (416, 416)  # also the case for v3-tiny
+        if any(["288", "320", "416", "608"] in yolo_type[-3:]):
+            dim = int(yolo_type[-3:])
+            self.yolo_h_w = tuple(dim, dim)  # supported 288, 416, 608
+        self.h_w = tuple(0, 0)
         self.show_image = show_image
         # input to the model
-        self.yolo_input_h = h
-        self.yolo_input_w = w
-        self.output_shapes = [(1, 255, 19, 19), (1, 255, 38, 38), (1, 255, 76, 76)]
-        postprocessor_args = {
-            "yolo_masks": [
-                (6, 7, 8),
-                (3, 4, 5),
-                (0, 1, 2),
-            ],  # A list of 3 three-dimensional tuples for the YOLO masks
-            "yolo_anchors": [
-                (10, 13),
-                (16, 30),
-                (33, 23),
-                (30, 61),
-                (62, 45),  # A list of 9 two-dimensional tuples for the YOLO anchors
-                (59, 119),
-                (116, 90),
-                (156, 198),
-                (373, 326),
-            ],
-            "obj_threshold": obj_threshold,  # Threshold for object coverage, float value between 0 and 1
-            "nms_threshold": nms_threshold,  # Threshold for non-max suppression algorithm, float value between 0 and 1
-            "yolo_input_resolution": (self.yolo_input_h, self.yolo_input_w),
-        }
-        self.postprocessor = PostprocessYOLO(**postprocessor_args)
-        self.all_categories = [line.rstrip("\n") for line in open(label_file_path)]
-        self.classes_colors = {}
+        self.all_categories = [
+            line.rstrip("\n")
+            for line in open(os.path.join(config_path, label_filename))
+        ]
+
+        # allocating memmory on gpu
         self.trt_logger = trt.Logger()
-        self.engine = self.get_engine(onnx_engine, trt_engine)
+        self.engine = self.get_engine(weights_path, config_path, yolo_type)
         self.inputs, self.outputs, self.bindings, self.stream = self._allocate_buffers()
         self.context = self.engine.create_execution_context()
 
+        # reading yolo parameters for processing
+        postprocessor_cfg = read_json(postprocessor_cfg)[yolo_type]
+        postprocessor_cfg.update(
+            {
+                "obj_threshold": obj_threshold,  # Threshold for object coverage, float value between 0 and 1
+                "nms_threshold": nms_threshold,  # Threshold for non-max suppression algorithm, float value between 0 and 1
+                "yolo_input_resolution": self.yolo_h_w,
+                "class_num": len(self.all_categories),
+            }
+        )
+        self.postprocessor = PostprocessYOLO(
+            os.path.join(config_path, postprocessor_cfg)
+        )
+        if show_image:
+            self.drawer = Visualization(self.all_categories)
+
     def __call__(self, image):
-        h, w, image_processed = self.image_preparation(image)
-        # Output shapes expected by the post-processor
-        # Do inference with TensorRT
+        h_w, image_prepared = self.image_preparation(image)
+
         trt_outputs = []
-        self.inputs[0].host = image_processed
+        self.inputs[0].host = image_prepared
         trt_outputs = self.do_inference(
             context=self.context,
             bindings=self.bindings,
@@ -74,67 +73,56 @@ class DarknetTRT(object):
             outputs=self.outputs,
             stream=self.stream,
         )
-        # Before doing post-processing, we need to reshape the outputs as the do_inference will give us flat arrays.
-        trt_outputs = [
-            output.reshape(shape)
-            for output, shape in zip(trt_outputs, self.output_shapes)
-        ]
-        # Before doing post-processing, we need to reshape the outputs as the do_inference will give us flat arrays.
-        # Run the post-processing algorithms on the TensorRT outputs and get the bounding box details of detected objects
-        boxes, classes, scores = self.postprocessor.process(trt_outputs, (w, h))
+
+        boxes, classes, scores = self.postprocessor.process(trt_outputs, h_w)
+
         # Draw the bounding boxes onto the original input image and save it as a PNG file
         obj_detected_img = None
-        if self.show_image:
-            obj_detected_img = self.draw_bboxes(
+        if self.drawer:
+            obj_detected_img = self.drawer(
                 image, boxes, scores, classes, self.all_categories
             )
         return boxes, classes, scores, obj_detected_img
 
-    def get_engine(self, onnx_file_path, engine_file_path):
+    def get_engine(self, weights_path, configs_path, yolo_type):
         """Attempts to load a serialized engine if available, otherwise builds a new TensorRT engine and saves it."""
+        engine_file_path = "%s.trt" % yolo_type
+        if not os.path.exists(engine_file_path):
+            self.build_trt_engine(weights_path, configs_path, yolo_type)
+        # If a serialized engine exists, use it instead of building an engine.
+        rospy.logdebug("Reading engine from file {}".format(engine_file_path))
+        with open(engine_file_path, "rb") as f, trt.Runtime(self.trt_logger) as runtime:
+            return runtime.deserialize_cuda_engine(f.read())
 
-        def build_engine(onnx_file_path):
-            """Takes an ONNX file and creates a TensorRT engine to run inference with"""
-            with trt.Builder(
-                self.trt_logger
-            ) as builder, builder.create_network() as network, trt.OnnxParser(
-                network, self.trt_logger
-            ) as parser:
-                builder.max_workspace_size = 1 << 28  # 256MiB
-                builder.max_batch_size = 1
-                # Parse model file
-                if not os.path.exists(onnx_file_path):
-                    print(
-                        "ONNX file {} not found, please run yolov3_to_onnx.py first to generate it.".format(
-                            onnx_file_path
-                        )
-                    )
-                    exit(1)
-                print("Loading ONNX file from path {}...".format(onnx_file_path))
-                with open(onnx_file_path, "rb") as model:
-                    print("Beginning ONNX file parsing")
-                    parser.parse(model.read())
-                print("Completed parsing of ONNX file")
-                print(
-                    "Building an engine from file {}; this may take a while...".format(
-                        onnx_file_path
-                    )
+    def build_trt_engine(self, weights_path, configs_path, yolo_type):
+        """Takes an ONNX file and creates a TensorRT engine to run inference with"""
+        rospy.logdebug("Building trt engine file")
+        onnx_file_path = "%s.onnx" % yolo_type
+        engine_file_path = "%s.trt" % yolo_type
+        if not os.path.exists(onnx_file_path):
+            build_onnx_engine(weights_path, configs_path, yolo_type)
+        with trt.Builder(
+            self.trt_logger
+        ) as builder, builder.create_network() as network, trt.OnnxParser(
+            network, self.trt_logger
+        ) as parser:
+            builder.max_workspace_size = 1 << 28  # 256MiB
+            builder.max_batch_size = 1
+            # Parse model file
+            rospy.loginfo("Loading ONNX file from path {}...".format(onnx_file_path))
+            with open(onnx_file_path, "rb") as model:
+                rospy.info("Beginning ONNX file parsing")
+                parser.parse(model.read())
+            rospy.info("Completed parsing of ONNX file")
+            rospy.info(
+                "Building an engine from file {}; this may take a while...".format(
+                    onnx_file_path
                 )
-                engine = builder.build_cuda_engine(network)
-                print("Completed creating Engine")
-                with open(engine_file_path, "wb") as f:
-                    f.write(engine.serialize())
-                exit(1)
-
-        if os.path.exists(engine_file_path):
-            # If a serialized engine exists, use it instead of building an engine.
-            print("Reading engine from file {}".format(engine_file_path))
-            with open(engine_file_path, "rb") as f, trt.Runtime(
-                self.trt_logger
-            ) as runtime:
-                return runtime.deserialize_cuda_engine(f.read())
-        else:
-            build_engine(onnx_file_path)
+            )
+            engine = builder.build_cuda_engine(network)
+            rospy.loginfo("Completed creating Engine")
+            with open(engine_file_path, "wb") as f:
+                f.write(engine.serialize())
 
     def _allocate_buffers(self):
         inputs = []
@@ -174,77 +162,26 @@ class DarknetTRT(object):
             self.w = width
 
             # Determine image to be used
-            self.padded_image = np.zeros(
+            padded_image = np.zeros(
                 (max(self.h, self.w), max(self.h, self.w), channels)
             ).astype(float)
 
         # Add padding
         if self.w > self.h:
-            self.padded_image[
+            padded_image[
                 (self.w - self.h) // 2 : self.h + (self.w - self.h) // 2, :, :
             ] = img_raw
         else:
-            self.padded_image[
+            padded_image[
                 :, (self.h - self.w) // 2 : self.w + (self.h - self.w) // 2, :
             ] = img_raw
 
         # Resize and normalize
-        input_img = (
-            cv2.resize(self.padded_image, (self.yolo_input_h, self.yolo_input_w))
-            / 255.0
-        )
+        input_img = cv2.resize(padded_image, (self.yolo_h, self.yolo_w)) / 255
+        input_img = cv2.transpose(input_img, axes=(2, 0, 1))  # HWC to CHW format
         input_img = np.array(input_img, dtype=np.float32, order="C")
-        # HWC to CHW format:
-        input_img = np.transpose(input_img, [2, 0, 1])
-        # CHW to NCHW format
-        input_img = np.expand_dims(input_img, axis=0)
-        # Convert the input_img to row-major order, also known as "C order":
-        input_img = np.array(input_img, dtype=np.float32, order="C")
-        return height, width, input_img
-
-    def draw_bboxes(self, image_raw, bboxes, confidences, categories, all_categories):
-        if bboxes is None:
-            return image_raw
-        # Copy image and visualize
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        fontScale = 0.8
-        thickness = 2
-        for box, score, category in zip(bboxes, confidences, categories):
-            label = self.all_categories[category]
-            x_coord, y_coord, width, height = box
-            x_p3 = max(0, np.floor(x_coord + 0.5).astype(int))
-            y_p3 = max(0, np.floor(y_coord + 0.5).astype(int))
-            x_p1 = min(image_raw.shape[1], np.floor(x_coord + width + 0.5).astype(int))
-            y_p1 = min(image_raw.shape[0], np.floor(y_coord + height + 0.5).astype(int))
-
-            # Find class color
-            if label in self.classes_colors.keys():
-                color = self.classes_colors[label]
-            else:
-                # Generate a new color if first time seen this label
-                color = np.random.randint(0, 255, 3)
-                self.classes_colors[label] = color
-
-            # Create rectangle
-            cv2.rectangle(
-                image_raw,
-                (int(x_p1), int(y_p1)),
-                (int(x_p3), int(y_p3)),
-                (color[0], color[1], color[2]),
-                thickness,
-            )
-            text = ("{:s}: {:.3f}").format(label, score)
-            cv2.putText(
-                image_raw,
-                text,
-                (int(x_p1), int(y_p1 + 20)),
-                font,
-                fontScale,
-                (255, 255, 255),
-                thickness,
-                cv2.LINE_AA,
-            )
-        return image_raw
+        input_img = np.expand_dims(input_img, axis=0)  # CHW to NCHW format
+        return (height, width), input_img
 
 
 # Simple helper data class that's a little nicer to use than a 2-tuple.
@@ -261,16 +198,9 @@ class HostDeviceMem(object):
 
 
 class PostprocessYOLO(object):
-    """Class for post-processing the three outputs tensors from YOLOv3-608."""
+    """Class for post-processing the three outputs tensors from YOLO."""
 
-    def __init__(
-        self,
-        yolo_masks,
-        yolo_anchors,
-        obj_threshold,
-        nms_threshold,
-        yolo_input_resolution,
-    ):
+    def __init__(self, postprocessor_args):
         """Initialize with all values that will be kept when processing several frames.
         Assuming 3 outputs of the network in the case of (large) YOLOv3.
 
@@ -278,16 +208,25 @@ class PostprocessYOLO(object):
         yolo_masks -- a list of 3 three-dimensional tuples for the YOLO masks
         yolo_anchors -- a list of 9 two-dimensional tuples for the YOLO anchors
         object_threshold -- threshold for object coverage, float value between 0 and 1
-        nms_threshold -- threshold for non-max suppression algorithm,
-        float value between 0 and 1
-        input_resolution_yolo -- two-dimensional tuple with the target network's (spatial)
-        input resolution in HW order
+        nms_threshold -- threshold for non-max suppression algorithm, float value between 0 and 1
+        input_resolution_yolo -- input resolution in HW order
         """
-        self.masks = yolo_masks
-        self.anchors = yolo_anchors
-        self.object_threshold = obj_threshold
-        self.nms_threshold = nms_threshold
-        self.input_resolution_yolo = yolo_input_resolution
+        # initializing parameters for the postprocessing node
+        postprocessor_args["output_shapes"] = [
+            tuple(
+                a,
+                b,
+                postprocessor_args["yolo_input_resolution"][0] // c,
+                postprocessor_args["yolo_input_resolution"][1] // d,
+            )
+            for a, b, c, d in postprocessor_args["output_shapes"]
+        ]
+        self.masks = postprocessor_args["yolo_masks"]
+        self.anchors = postprocessor_args["yolo_anchors"]
+        self.object_threshold = postprocessor_args["obj_threshold"]
+        self.nms_threshold = postprocessor_args["nms_threshold"]
+        self.input_resolution_yolo = postprocessor_args["yolo_input_resolution"]
+        self.class_num = postprocessor_args["class_num"]
 
     def process(self, outputs, resolution_raw):
         """Take the YOLOv3 outputs generated from a TensorRT forward pass, post-process them
@@ -296,8 +235,12 @@ class PostprocessYOLO(object):
 
         Keyword arguments:
         outputs -- outputs from a TensorRT engine in NCHW format
-        resolution_raw -- the original spatial resolution from the input PIL image in WH order
+        resolution_raw -- resolution of input image in format HW
         """
+
+        for output, shape in zip(outputs, self.output_shapes):
+            outputs.append[output.reshape(shape)]
+
         outputs_reshaped = list()
         for output in outputs:
             outputs_reshaped.append(self._reshape_output(output))
@@ -306,6 +249,18 @@ class PostprocessYOLO(object):
             outputs_reshaped, resolution_raw
         )
 
+        if (boxes is None) or len(boxes) < 1:
+            return boxes, categories, confidences
+
+        image_height, image_width = resolution_raw
+
+        for i in enumerate(boxes):
+            x, y, height, width = boxes[i]
+            x_min = max(0, np.floor(x + 0.5).astype(int))
+            y_max = max(0, np.floor(y + 0.5).astype(int))
+            x_max = min(image_width, np.floor(x + width + 0.5).astype(int))
+            y_min = min(image_height, np.floor(y + height + 0.5).astype(int))
+            boxes[i] = [x_min, y_min, x_max, y_max]
         return boxes, categories, confidences
 
     def _reshape_output(self, output):
@@ -318,9 +273,8 @@ class PostprocessYOLO(object):
         output = np.transpose(output, [0, 2, 3, 1])
         _, height, width, _ = output.shape
         dim1, dim2 = height, width
-        dim3 = 3
-        # There are CATEGORY_NUM=80 object categories:
-        dim4 = 4 + 1 + 80
+        dim3 = 3  # probably color
+        dim4 = 4 + 1 + self.class_num  # output classes and box anker residuals
         return np.reshape(output, (dim1, dim2, dim3, dim4))
 
     def _process_yolo_output(self, outputs_reshaped, resolution_raw):
@@ -331,7 +285,7 @@ class PostprocessYOLO(object):
         Keyword arguments:
         outputs_reshaped -- list of three reshaped YOLO outputs as NumPy arrays
         with shape (height,width,3,85)
-        resolution_raw -- the original spatial resolution from the input PIL image in WH order
+        resolution_raw -- resolution of input image in format HW
         """
 
         # E.g. in YOLOv3-608, there are three output tensors, which we associate with their
@@ -350,7 +304,7 @@ class PostprocessYOLO(object):
         confidences = np.concatenate(confidences)
 
         # Scale boxes back to original image shape:
-        width, height = resolution_raw
+        height, width = resolution_raw
         image_dims = [width, height, width, height]
         boxes = boxes * image_dims
 
@@ -489,3 +443,55 @@ class PostprocessYOLO(object):
 
         keep = np.array(keep)
         return keep
+
+
+class Visualization(object):
+    def __init__(
+        self,
+        possible_lables,
+        font_scale=0.8,
+        thickness=2,
+        font=cv2.FONT_HERSHEY_SIMPLEX,
+    ):
+        self.possible_lables = possible_lables
+        self.font_scale = font_scale
+        self.thickness = thickness
+        self.font = font
+        self.classes_colors = {}
+
+    def __call__(self, image_raw, angles, confidences, labels):
+        if angles is None:
+            return image_raw
+        # Copy image and visualize
+        for box, score, label in zip(angles, confidences, labels):
+            label = self.possible_lables[label]
+            x_min, y_max, x_max, y_min = box
+
+            # Find class color
+            if label in self.classes_colors.keys():
+                color = self.classes_colors[label]
+            else:
+                # Generate a new color if first time seen this label
+                color = np.random.randint(0, 255, 3)
+                self.classes_colors[label] = color
+
+            # Create rectangle
+            cv2.rectangle(
+                image_raw,
+                (int(x_min), int(y_min)),
+                (int(x_max), int(y_max)),
+                (color[0], color[1], color[2]),
+                self.thickness,
+            )
+            text = ("{:s}: {:.2f}").format(label, score)
+            cv2.putText(
+                image_raw,
+                text,
+                (int(x_min), int(y_max + 20)),
+                self.font,
+                self.fontScale,
+                (255, 255, 255),
+                self.thickness,
+                cv2.LINE_AA,
+            )
+        return image_raw

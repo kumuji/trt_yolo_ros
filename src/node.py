@@ -6,156 +6,131 @@ from cv_bridge import CvBridge, CvBridgeError
 from darknet_ros_msgs.msg import BoundingBox, BoundingBoxes
 from sensor_msgs.msg import Image
 
-import numpy as np
 from trt_package.detector import DarknetTRT
+from utils import timeit
 
 
 class Detector(object):
     def __init__(self):
         self._bridge = CvBridge()
         self._read_params()
-
-        # Load subscription topics
-        self.image_topic = rospy.get_param("~image_topic", "/camera/rgb/image_raw")
-        # Load publisher topics
-        self.detected_objects_topic = rospy.get_param("~detected_objects_topic")
-        self.published_image_topic = rospy.get_param("~detections_image_topic")
-
-        self._init()
+        self._init_topics()
         self.model = DarknetTRT(
-            obj_threshold=0.6,
-            nms_threshold=0.7,
-            h=self.yolo_input_h,
-            w=self.yolo_input_w,
-            label_file_path=self.label_path,
-            trt_engine=self.trt_engine_path,
-            onnx_engine=self.onnx_engine_path,
+            obj_threshold=self.obj_threshold,
+            nms_threshold=self.nms_threshold,
+            yolo_type=self.yolo_type,
+            weights_path=self.weights_path,
+            config_path=self.config_path,
+            label_filename=self.label_filename,
+            postprocessor_cfg=self.postprocessor_cfg,
+            cuda_device=self.cuda_device,
             show_image=self.publish_image,
         )
         rospy.loginfo("[detector] loaded and ready")
 
-    # def _read_subscriber_param(self, name):
-    #     """
-    #     @brief      Convenience function to read subscriber parameter.
-    #     """
-    #     topic = rospy.get_param("~subscriber/" + name + "/topic")
-    #     queue_size = rospy.get_param("~subscriber/" + name + "/queue_size")
-    #     return topic, queue_size
+    def _read_subscriber_param(self, name):
+        # Convenience function to read subscriber parameter.
+        topic = rospy.get_param("~subscriber/" + name + "/topic")
+        queue_size = rospy.get_param("~subscriber/" + name + "/queue_size", 10)
+        return topic, queue_size
 
-    # def _read_publisher_param(self, name):
-    #     """
-    #     @brief      Convenience function to read publisher parameter.
-    #     """
-    #     topic = rospy.get_param("~publisher/" + name + "/topic")
-    #     queue_size = rospy.get_param("~publisher/" + name + "/queue_size")
-    #     latch = rospy.get_param("~publisher/" + name + "/latch")
-    #     return topic, queue_size, latch
+    def _read_publisher_param(self, name):
+        # Convenience function to read publisher parameter.
+        topic = rospy.get_param("~publisher/" + name + "/topic")
+        queue_size = rospy.get_param("~publisher/" + name + "/queue_size", 1)
+        latch = rospy.get_param("~publisher/" + name + "/latch", False)
+        return topic, queue_size, latch
 
-    def _init(self):
-        # Define subscribers
-        self.image_sub = rospy.Subscriber(
-            self.image_topic,
-            Image,
-            self._image_callback,
-            queue_size=1,
-            buff_size=2 ** 24,
-        )
-        # Define publishers
+    def _init_topics(self):
+        # Publisher
+        topic, queue_size, latch = self._read_publisher_param("boxes")
         self._pub = rospy.Publisher(
-            self.detected_objects_topic, BoundingBoxes, queue_size=10
+            topic, BoundingBoxes, queue_size=queue_size, latch=latch
         )
-        if self.publish_image:
-            self._pub_viz = rospy.Publisher(
-                self.published_image_topic, Image, queue_size=10
-            )
-        rospy.loginfo("[detector] subsribers and publishers created")
-        # """
-        # @brief      Initialize ROS connection.
-        # """
-        # # Publisher
-        # topic, queue_size, latch = self._read_publisher_param("word")
-        # self._word_pub = rospy.Publisher(
-        #         topic, String, queue_size=queue_size, latch=latch)
-
-        # topic, queue_size, latch = self._read_publisher_param("image")
-        # self._image_pub = rospy.Publisher(
-        #         topic, Image, queue_size=queue_size, latch=latch)
-
-        # # Subscriber
-        # topic, queue_size = self._read_subscriber_param("word")
-        # self._word_sub = rospy.Subscriber(
-        #         topic, String, self._word_callback, queue_size=queue_size)
-
-        # topic, queue_size = self._read_subscriber_param("image")
-        # self._image_sub = rospy.Subscriber(
-        #         topic, Image, self._image_callback, queue_size=queue_size)
+        topic, queue_size, latch = self._read_publisher_param("image")
+        self._pub_viz = rospy.Publisher(
+            topic, Image, queue_size=queue_size, latch=latch
+        )
+        # Subscriber
+        topic, queue_size = self._read_subscriber_param("image")
+        self._image_sub = rospy.Subscriber(
+            topic, Image, self._image_callback, queue_size=queue_size, buff_size=2 ** 24
+        )
+        rospy.logdebug("[detector] publishers and subsribers initialized")
 
     def _read_params(self):
         self.publish_image = rospy.get_param("~publish_image", False)
-        self.trt_engine_path = rospy.get_param("~trt_engine_path", "yolo.engine")
-        self.onnx_engine_path = rospy.get_param("~onnx_engine_path", "yolo.onnx")
-        self.label_path = rospy.get_param("~label_path", "coco_labels.txt")
-        self.yolo_input_h = rospy.get_param("~yolo_input_h", 608)
-        self.yolo_input_w = rospy.get_param("~yolo_input_w", 608)
+        # default paths to weights from different sources
+        self.weights_path = rospy.get_param("~weights_path", "./weights/")
+        self.config_path = rospy.get_param("~config_path", "./config/")
+        self.label_filename = rospy.get_param("~label_filename", "coco_labels.txt")
+        # parameters of yolo detector
+        self.yolo_type = rospy.get_param("~yolo_type", "yolov3-416")
+        self.postprocessor_cfg = rospy.get_param(
+            "~postprocessor_cfg", "yolo_postprocess_config.json.txt"
+        )
         self.obj_threshold = rospy.get_param("~obj_threshold", 0.6)
-        self.nms_threshold = rospy.get_param("~nms_threshold", 0.7)
+        self.nms_threshold = rospy.get_param("~nms_threshold", 0.3)
+        # default cuda device
         self.cuda_device = rospy.get_param("~cuda_device", 0)
-        rospy.loginfo("[detector] parameters read")
+        rospy.logdebug("[detector] parameters read")
 
     def _image_callback(self, msg):
         self.msg = None
         try:
             self.image = self._bridge.imgmsg_to_cv2(msg, "bgr8")
             self.msg = msg
+            rospy.logdebug("[detector] image received")
         except CvBridgeError as e:
             print(e)
 
+    @timeit
     def process_frame(self):
-        start_time = rospy.get_rostime()
-        last_publish = rospy.get_rostime()
         rospy.logdebug("[detector] processing frame")
-        if self.msg is None:
+        if (self.msg is None) or (self.msg.header is None):
             return
+
         # Initialize detection results
         detection_results = BoundingBoxes()
         detection_results.header = self.msg.header
         detection_results.image_header = self.msg.header
-        boxes, classes, scores, obj_detected_img = self.model(self.image)
-        if boxes is not None:
-            for box, score, category in zip(boxes, scores, classes):
-                x_coord, y_coord, width, height = box
-                left = max(0, np.floor(x_coord + 0.5))
-                top = max(0, np.floor(y_coord + 0.5))
-                right = min(self.image.shape[1], np.floor(x_coord + width + 0.5))
-                bottom = min(self.image.shape[0], np.floor(y_coord + height + 0.5))
-                # Populate darknet message
-                detection_msg = BoundingBox()
-                detection_msg.xmin = int(left)
-                detection_msg.xmax = int(right)
-                detection_msg.ymin = int(bottom)
-                detection_msg.ymax = int(top)
-                detection_msg.probability = score
-                detection_msg.Class = self.model.all_categories[int(category)]
-                detection_results.bounding_boxes.append(detection_msg)
+        boxes, classes, scores, visualization = self.model(self.image)
 
+        # construct message
+        self._write_message(detection_results, boxes, scores, classes)
+
+        # send message
         try:
             rospy.logdebug("[detector] publishing")
             self._pub.publish(detection_results)
-            if self.publish_image:
-                self._pub_viz.publish(
-                    self._bridge.cv2_to_imgmsg(obj_detected_img, "bgr8")
-                )
-            last_publish = rospy.get_rostime()
+            if not self.publish_image:
+                return
+            self._pub_viz.publish(self._bridge.cv2_to_imgmsg(visualization, "bgr8"))
         except CvBridgeError as e:
             print(e)
-        delay = (last_publish.nsecs - start_time.nsecs) / 1000000
-        rospy.logdebug("[detector] interference time for callback[ms]={}".format(delay))
+
+    def _write_message(self, detection_results, boxes, scores, classes):
+        if boxes is None:
+            return None
+        for box, score, category in zip(boxes, scores, classes):
+            # Populate darknet message
+            left, top, right, bottom = box
+            detection_msg = BoundingBox()
+            detection_msg.xmin = left
+            detection_msg.xmax = right
+            detection_msg.ymin = bottom
+            detection_msg.ymax = top
+            detection_msg.probability = score
+            detection_msg.Class = self.model.all_categories[int(category)]
+            detection_results.bounding_boxes.append(detection_msg)
+        return detection_results
 
 
 if __name__ == "__main__":
     rospy.init_node("detector")
     rospy.loginfo("[detector] starting the node")
-    rospy.Rate(10)
+    publish_rate = rospy.get_param("~publish_rate", 10)
+    rospy.Rate(publish_rate)
     network = Detector()
     while not rospy.is_shutdown():
         network.process_frame()

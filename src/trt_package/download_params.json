@@ -1,0 +1,26 @@
+{
+    "yolov3": {
+        "cfg": {
+            "link": "https://raw.githubusercontent.com/pjreddie/darknet/master/cfg/yolov3.cfg",
+            "checksum": "b969a43a848bbf26901643b833cfb96c"
+        },
+        "weights": {
+            "link": "https://pjreddie.com/media/files/yolov3.weights",
+            "checksum": "c84e5b99d0e52cd466ae710cadf6d84c"
+        },
+        "yolov3-tiny": {
+            "cfg": {
+                "link": "https://raw.githubusercontent.com/pjreddie/darknet/master/cfg/yolov3-tiny.cfg",
+                "checksum": "5c837d89621cc057832c3ae83f6b96ac"
+            },
+            "weights": {
+                "link": "https://pjreddie.com/media/files/yolov3-tiny.weights",
+                "checksum": "3bcd6b390912c18924b46b26a9e7ff53"
+            },
+            "coco-labels": {
+                "link": "https://raw.githubusercontent.com/amikelive/coco-labels/master/coco-labels-paper.txt",
+                "checksum": "a830abf70aabcb873475cbf57e3ce380"
+            }
+        }
+    }
+}

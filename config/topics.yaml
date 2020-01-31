@@ -1,15 +1,15 @@
 publisher:
-    word:
-        topic: /output_string
-        queue_size: 1
+    boxes:
+        topic: /detector/bounding_boxes
+        queue_size: 10
         latch: false
 
     image:
-        topic: /output_image
+        topic: /detector/bounding_boxes/image
         queue_size: 1
         latch: false
 
 subscriber:
     image:
-        topic: /input_image
+        topic: /camera/color/image_raw
         queue_size: 1

@@ -1,0 +1,8 @@
+publish_rate:10
+publish_image:false
+weights_path:"../weights"
+config_path:"../config"
+label_filename:"coco_labels.txt"
+obj_threshold:0
+nms_threshold:0
+cuda_device:0
