@@ -3,5 +3,3 @@ onnx==1.5.0
 pycuda>=2017.1.1
 wget>=3.2
 opencv-python
-json
-pathlib

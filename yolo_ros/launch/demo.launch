@@ -1,32 +1,48 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
+    <!-- subsribers and publishers -->
     <arg name =         "subscriber/image/topic" default = "/camera/color/image_raw"/>
     <arg name = "publisher/bounding_boxes/topic" default = "/detector/bounding_boxes"/>
     <arg name =          "publisher/image/topic" default = "/detector/bounding_boxes/image"/>
+    <!-- how often run the yolo? -->
     <arg name =                   "publish_rate" default = "10"/>
+    <!-- Would you like to publish visualization, might slow don the process -->
     <arg name =                  "publish_image" default = "true"/>
+    <!-- path to weights, this folder might get big if you have mutliple engines -->
     <arg name =                   "weights_path" default = "$(find detector)/weights/"/>
     <arg name =                    "config_path" default = "$(find detector)/config/"/>
     <arg name =                 "label_filename" default = "coco_labels.txt"/>
-    <arg name =                      "yolo_type" default = "yolov3-608"/>
+    <!-- YOLO configs -->
+    <!-- type of yolo to run, supported types: -->
+    <!-- yolov3-tiny-xxx -->
+    <!-- yolov3-xxx -->
+    <!-- where xxx can be devided by 32 -->
+    <!-- ususally 416 is used -->
+    <!-- if more acuracy needed use 608, but it will run slower -->
+    <!-- if you need more spped use 280 or 320 -->
+    <!-- all configs and weights will be downloaded automatically -->
+    <arg name =                      "yolo_type" default = "yolov3-416"/>
     <arg name =                  "obj_threshold" default = "0.7"/>
     <arg name =                  "nms_threshold" default = "0.3"/>
+    <arg name =              "postprocessor_cfg" default = "yolo_postprocess_config.json"/>
+    <!-- Device to run the inference on. Sorry, no multiple devices for now -->
     <arg name =                    "cuda_device" default = "0"/>
 
     <!-- Node -->
     <node name="detector" pkg="detector" type="node.py" output="screen" respawn="true">
         <param name =         "subscriber/image/topic" value = "$(arg subscriber/image/topic)"/>
-        <param name =          "publisher/image/topic" value = "$(arg publisher/image/topic)"/>
         <param name = "publisher/bounding_boxes/topic" value = "$(arg publisher/bounding_boxes/topic)"/>
+        <param name =          "publisher/image/topic" value = "$(arg publisher/image/topic)"/>
         <param name =                   "publish_rate" value = "$(arg publish_rate)"/>
         <param name =                  "publish_image" value = "$(arg publish_image)"/>
         <param name =                   "weights_path" value = "$(arg weights_path)"/>
         <param name =                    "config_path" value = "$(arg config_path)"/>
         <param name =                 "label_filename" value = "$(arg label_filename)"/>
+        <param name =                      "yolo_type" value = "$(arg yolo_type)"/>
         <param name =                  "obj_threshold" value = "$(arg obj_threshold)"/>
         <param name =                  "nms_threshold" value = "$(arg nms_threshold)"/>
+        <param name =              "postprocessor_cfg" value = "$(arg postprocessor_cfg)"/>
         <param name =                    "cuda_device" value = "$(arg cuda_device)"/>
-        <param name =                      "yolo_type" value = "$(arg yolo_type)"/>
     </node>
 
 </launch>

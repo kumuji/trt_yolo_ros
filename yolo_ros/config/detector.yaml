@@ -1,8 +1,27 @@
-publish_rate:10
-publish_image:false
-weights_path:"../weights"
-config_path:"../config"
-label_filename:"coco_labels.txt"
-obj_threshold:0
-nms_threshold:0
-cuda_device:0
+# how often run the yolo?
+publish_rate: 10
+
+# Would you like to publish visualization, might slow don the process
+publish_image: false
+
+# paths to all of the files
+weights_path: "../weights"
+config_path: "../config"
+label_filename: "coco_labels.txt"
+
+# YOLO configs
+# type of yolo to run, supported types:
+# yolov3-tiny-xxx
+# yolov3-xxx
+# where xxx can be devided by 32
+# ususally 416 is used
+# if more acuracy needed use 608, but it will run slower
+# if you need more spped use 280 or 320
+# all configs and weights will be downloaded automatically
+yolo_type: "yolov3-416"
+obj_threshold: 0.7
+nms_threshold: 0.3
+postprocessor_cfg: "yolo_postprocess_config.json"
+
+# Device to run the inference on. Sorry, no multiple devices for now
+cuda_device: 0
