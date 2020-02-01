@@ -88,7 +88,6 @@ class Detector(object):
         rospy.logdebug("[detector] processing frame")
         if (self.msg is None) or (self.msg.header is None):
             return
-
         # Initialize detection results
         detection_results = BoundingBoxes()
         detection_results.header = self.msg.header
