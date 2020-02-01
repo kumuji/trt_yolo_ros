@@ -1,6 +1,6 @@
 # Description
 Simple project on running yolo using tensorrt acceleration on jetson nano and xavier.
-Work is still in progress, feel free toopen any issue
+For more details (before I wrote them here) you can find in launch files
 
 # Installation
 Make sure that tensorrt is installed on your system
