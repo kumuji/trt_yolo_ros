@@ -93,9 +93,9 @@ class Detector(object):
         detection_results = BoundingBoxes()
         detection_results.header = self.msg.header
         detection_results.image_header = self.msg.header
+        self.msg = None
         boxes, classes, scores, visualization = self.model(self.image)
         # and deleting the processed message from memmory
-        self.msg = None
 
         # construct message
         self._write_message(detection_results, boxes, scores, classes)
