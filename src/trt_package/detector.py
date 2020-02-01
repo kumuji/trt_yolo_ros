@@ -27,25 +27,26 @@ class DarknetTRT(object):
         show_image=False,
     ):
         # input to the node node
-        self.yolo_h_w = (416, 416)  # also the case for v3-tiny
-        if any(["288", "320", "416", "608"] in yolo_type[-3:]):
-            dim = int(yolo_type[-3:])
-            self.yolo_h_w = tuple(dim, dim)  # supported 288, 416, 608
-        self.h_w = tuple(0, 0)
+        dim = int(yolo_type[-3:])
+        self.yolo_h_w = (dim, dim)
+        self.h = 0
+        self.w = 0
         self.show_image = show_image
         # input to the model
-        self.all_categories = [
-            line.rstrip("\n")
-            for line in open(os.path.join(config_path, label_filename))
-        ]
 
         # allocating memmory on gpu
         self.trt_logger = trt.Logger()
         self.engine = self.get_engine(weights_path, config_path, yolo_type)
         self.inputs, self.outputs, self.bindings, self.stream = self._allocate_buffers()
         self.context = self.engine.create_execution_context()
+        self.all_categories = [
+            line.rstrip("\n")
+            for line in open(os.path.join(config_path, label_filename))
+        ]
 
         # reading yolo parameters for processing
+        yolo_type = "yolov3-tiny" if "tiny" in yolo_type else "yolov3"
+        postprocessor_cfg = os.path.join(config_path, postprocessor_cfg)
         postprocessor_cfg = read_json(postprocessor_cfg)[yolo_type]
         postprocessor_cfg.update(
             {
@@ -55,14 +56,13 @@ class DarknetTRT(object):
                 "class_num": len(self.all_categories),
             }
         )
-        self.postprocessor = PostprocessYOLO(
-            os.path.join(config_path, postprocessor_cfg)
-        )
+        self.postprocessor = PostprocessYOLO(postprocessor_cfg)
+        self.drawer = None
         if show_image:
             self.drawer = Visualization(self.all_categories)
 
     def __call__(self, image):
-        h_w, image_prepared = self.image_preparation(image)
+        padded_h_w, image_prepared = self.image_preparation(image)
 
         trt_outputs = []
         self.inputs[0].host = image_prepared
@@ -74,19 +74,28 @@ class DarknetTRT(object):
             stream=self.stream,
         )
 
-        boxes, classes, scores = self.postprocessor.process(trt_outputs, h_w)
-
+        boxes, classes, scores = self.postprocessor.process(trt_outputs, padded_h_w)
         # Draw the bounding boxes onto the original input image and save it as a PNG file
-        obj_detected_img = None
-        if self.drawer:
-            obj_detected_img = self.drawer(
-                image, boxes, scores, classes, self.all_categories
-            )
+        obj_detected_img = image
+        if boxes is None:
+            return boxes, classes, scores, obj_detected_img
+        for i in range(len(boxes)):
+            x, y, width, height = boxes[i]
+            x = x - ((padded_h_w[1] - self.w) // 2)
+            y = y - ((padded_h_w[0] - self.h) // 2)
+            left = max(0, np.floor(x + 0.5).astype(int))
+            top = max(0, np.floor(y + 0.5).astype(int))
+            right = min(self.w, np.floor(x + width + 0.5).astype(int))
+            bottom = min(self.h, np.floor(y + height + 0.5).astype(int))
+            boxes[i] = [left, bottom, right, top]
+        if self.drawer is not None:
+            obj_detected_img = self.drawer(image, boxes, scores, classes)
         return boxes, classes, scores, obj_detected_img
 
     def get_engine(self, weights_path, configs_path, yolo_type):
         """Attempts to load a serialized engine if available, otherwise builds a new TensorRT engine and saves it."""
-        engine_file_path = "%s.trt" % yolo_type
+        engine_file_name = "%s.trt" % yolo_type
+        engine_file_path = os.path.join(weights_path, engine_file_name)
         if not os.path.exists(engine_file_path):
             self.build_trt_engine(weights_path, configs_path, yolo_type)
         # If a serialized engine exists, use it instead of building an engine.
@@ -97,8 +106,10 @@ class DarknetTRT(object):
     def build_trt_engine(self, weights_path, configs_path, yolo_type):
         """Takes an ONNX file and creates a TensorRT engine to run inference with"""
         rospy.logdebug("Building trt engine file")
-        onnx_file_path = "%s.onnx" % yolo_type
-        engine_file_path = "%s.trt" % yolo_type
+        onnx_file_name = "%s.onnx" % yolo_type
+        engine_file_name = "%s.trt" % yolo_type
+        onnx_file_path = os.path.join(weights_path, onnx_file_name)
+        engine_file_path = os.path.join(weights_path, engine_file_name)
         if not os.path.exists(onnx_file_path):
             build_onnx_engine(weights_path, configs_path, yolo_type)
         with trt.Builder(
@@ -111,10 +122,10 @@ class DarknetTRT(object):
             # Parse model file
             rospy.loginfo("Loading ONNX file from path {}...".format(onnx_file_path))
             with open(onnx_file_path, "rb") as model:
-                rospy.info("Beginning ONNX file parsing")
+                rospy.loginfo("Beginning ONNX file parsing")
                 parser.parse(model.read())
-            rospy.info("Completed parsing of ONNX file")
-            rospy.info(
+            rospy.loginfo("Completed parsing of ONNX file")
+            rospy.loginfo(
                 "Building an engine from file {}; this may take a while...".format(
                     onnx_file_path
                 )
@@ -162,9 +173,9 @@ class DarknetTRT(object):
             self.w = width
 
             # Determine image to be used
-            padded_image = np.zeros(
-                (max(self.h, self.w), max(self.h, self.w), channels)
-            ).astype(float)
+        padded_image = np.zeros(
+            (max(self.h, self.w), max(self.h, self.w), channels)
+        ).astype(float)
 
         # Add padding
         if self.w > self.h:
@@ -175,10 +186,11 @@ class DarknetTRT(object):
             padded_image[
                 :, (self.h - self.w) // 2 : self.w + (self.h - self.w) // 2, :
             ] = img_raw
+        height, width, _ = padded_image.shape
 
         # Resize and normalize
-        input_img = cv2.resize(padded_image, (self.yolo_h, self.yolo_w)) / 255
-        input_img = cv2.transpose(input_img, axes=(2, 0, 1))  # HWC to CHW format
+        input_img = cv2.resize(padded_image, self.yolo_h_w) / 255
+        input_img = input_img.transpose((2, 0, 1))  # HWC to CHW format
         input_img = np.array(input_img, dtype=np.float32, order="C")
         input_img = np.expand_dims(input_img, axis=0)  # CHW to NCHW format
         return (height, width), input_img
@@ -214,19 +226,22 @@ class PostprocessYOLO(object):
         # initializing parameters for the postprocessing node
         postprocessor_args["output_shapes"] = [
             tuple(
-                a,
-                b,
-                postprocessor_args["yolo_input_resolution"][0] // c,
-                postprocessor_args["yolo_input_resolution"][1] // d,
+                [
+                    a,
+                    b,
+                    postprocessor_args["yolo_input_resolution"][0] // c,
+                    postprocessor_args["yolo_input_resolution"][1] // d,
+                ]
             )
             for a, b, c, d in postprocessor_args["output_shapes"]
         ]
-        self.masks = postprocessor_args["yolo_masks"]
-        self.anchors = postprocessor_args["yolo_anchors"]
+        self.masks = postprocessor_args["masks"]
+        self.anchors = postprocessor_args["anchors"]
         self.object_threshold = postprocessor_args["obj_threshold"]
         self.nms_threshold = postprocessor_args["nms_threshold"]
         self.input_resolution_yolo = postprocessor_args["yolo_input_resolution"]
         self.class_num = postprocessor_args["class_num"]
+        self.output_shapes = postprocessor_args["output_shapes"]
 
     def process(self, outputs, resolution_raw):
         """Take the YOLOv3 outputs generated from a TensorRT forward pass, post-process them
@@ -237,9 +252,9 @@ class PostprocessYOLO(object):
         outputs -- outputs from a TensorRT engine in NCHW format
         resolution_raw -- resolution of input image in format HW
         """
-
-        for output, shape in zip(outputs, self.output_shapes):
-            outputs.append[output.reshape(shape)]
+        outputs = [
+            output.reshape(shape) for output, shape in zip(outputs, self.output_shapes)
+        ]
 
         outputs_reshaped = list()
         for output in outputs:
@@ -252,15 +267,6 @@ class PostprocessYOLO(object):
         if (boxes is None) or len(boxes) < 1:
             return boxes, categories, confidences
 
-        image_height, image_width = resolution_raw
-
-        for i in enumerate(boxes):
-            x, y, height, width = boxes[i]
-            x_min = max(0, np.floor(x + 0.5).astype(int))
-            y_max = max(0, np.floor(y + 0.5).astype(int))
-            x_max = min(image_width, np.floor(x + width + 0.5).astype(int))
-            y_min = min(image_height, np.floor(y + height + 0.5).astype(int))
-            boxes[i] = [x_min, y_min, x_max, y_max]
         return boxes, categories, confidences
 
     def _reshape_output(self, output):
@@ -336,11 +342,16 @@ class PostprocessYOLO(object):
         """Take in a reshaped YOLO output in height,width,3,85 format together with its
         corresponding YOLO mask and return the detected bounding boxes, the confidence,
         and the class probability in each cell/pixel.
-
         Keyword arguments:
         output_reshaped -- reshaped YOLO output as NumPy arrays with shape (height,width,3,85)
         mask -- 2-dimensional tuple with mask specification for this output
         """
+
+        def sigmoid_v(array):
+            return np.reciprocal(np.exp(-array) + 1.0)
+
+        def exponential_v(array):
+            return np.exp(array)
 
         grid_h, grid_w, _, _ = output_reshaped.shape
 
@@ -348,12 +359,10 @@ class PostprocessYOLO(object):
 
         # Reshape to N, height, width, num_anchors, box_params:
         anchors_tensor = np.reshape(anchors, [1, 1, len(anchors), 2])
-        box_xy = 1.0 / (1.0 + np.exp(-output_reshaped[..., :2]))
-        box_wh = 1.0 / (1.0 + np.exp(-output_reshaped[..., 2:4])) * anchors_tensor
-        box_confidence = 1.0 / (1.0 + np.exp(-output_reshaped[..., 4]))
-
-        box_confidence = np.expand_dims(box_confidence, axis=-1)
-        box_class_probs = 1.0 / (1.0 + np.exp(-output_reshaped[..., 5:]))
+        box_xy = sigmoid_v(output_reshaped[..., 0:2])
+        box_wh = exponential_v(output_reshaped[..., 2:4]) * anchors_tensor
+        box_confidence = sigmoid_v(output_reshaped[..., 4:5])
+        box_class_probs = sigmoid_v(output_reshaped[..., 5:])
 
         col = np.tile(np.arange(0, grid_w), grid_w).reshape(-1, grid_w)
         row = np.tile(np.arange(0, grid_h).reshape(-1, 1), grid_h)
@@ -465,7 +474,7 @@ class Visualization(object):
         # Copy image and visualize
         for box, score, label in zip(angles, confidences, labels):
             label = self.possible_lables[label]
-            x_min, y_max, x_max, y_min = box
+            left, bottom, right, top = box
 
             # Find class color
             if label in self.classes_colors.keys():
@@ -478,8 +487,8 @@ class Visualization(object):
             # Create rectangle
             cv2.rectangle(
                 image_raw,
-                (int(x_min), int(y_min)),
-                (int(x_max), int(y_max)),
+                (int(left), int(top)),
+                (int(right), int(bottom)),
                 (color[0], color[1], color[2]),
                 self.thickness,
             )
@@ -487,9 +496,9 @@ class Visualization(object):
             cv2.putText(
                 image_raw,
                 text,
-                (int(x_min), int(y_max + 20)),
+                (int(left), int(bottom + 20)),
                 self.font,
-                self.fontScale,
+                self.font_scale,
                 (255, 255, 255),
                 self.thickness,
                 cv2.LINE_AA,

@@ -1,5 +1,5 @@
 publisher:
-    boxes:
+    bounding_boxes:
         topic: /detector/bounding_boxes
         queue_size: 10
         latch: false

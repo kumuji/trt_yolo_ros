@@ -4,5 +4,5 @@ from collections import OrderedDict
 
 
 def read_json(fname):
-    with os.path(fname).open("rt") as handle:
+    with open(os.path.abspath(fname), "rt") as handle:
         return json.load(handle, object_hook=OrderedDict)

@@ -8,7 +8,7 @@ def timeit(method):
         te = rospy.get_rostime().nsecs
         rospy.logdebug(
             "{} execution time: {:2.2} ms".format(
-                method.__name__, ((te - ts) * 1000000)
+                method.__name__, ((te - ts) * 1000000.0)
             )
         )
         return result

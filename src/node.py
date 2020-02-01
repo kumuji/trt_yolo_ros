@@ -26,6 +26,7 @@ class Detector(object):
             cuda_device=self.cuda_device,
             show_image=self.publish_image,
         )
+        self.msg = None
         rospy.loginfo("[detector] loaded and ready")
 
     def _read_subscriber_param(self, name):
@@ -43,7 +44,7 @@ class Detector(object):
 
     def _init_topics(self):
         # Publisher
-        topic, queue_size, latch = self._read_publisher_param("boxes")
+        topic, queue_size, latch = self._read_publisher_param("bounding_boxes")
         self._pub = rospy.Publisher(
             topic, BoundingBoxes, queue_size=queue_size, latch=latch
         )
@@ -66,9 +67,7 @@ class Detector(object):
         self.label_filename = rospy.get_param("~label_filename", "coco_labels.txt")
         # parameters of yolo detector
         self.yolo_type = rospy.get_param("~yolo_type", "yolov3-416")
-        self.postprocessor_cfg = rospy.get_param(
-            "~postprocessor_cfg", "yolo_postprocess_config.json.txt"
-        )
+        self.postprocessor_cfg = rospy.get_param( "~postprocessor_cfg", "yolo_postprocess_config.json")
         self.obj_threshold = rospy.get_param("~obj_threshold", 0.6)
         self.nms_threshold = rospy.get_param("~nms_threshold", 0.3)
         # default cuda device
@@ -95,6 +94,8 @@ class Detector(object):
         detection_results.header = self.msg.header
         detection_results.image_header = self.msg.header
         boxes, classes, scores, visualization = self.model(self.image)
+        # and deleting the processed message from memmory
+        self.msg = None
 
         # construct message
         self._write_message(detection_results, boxes, scores, classes)
@@ -103,9 +104,8 @@ class Detector(object):
         try:
             rospy.logdebug("[detector] publishing")
             self._pub.publish(detection_results)
-            if not self.publish_image:
-                return
-            self._pub_viz.publish(self._bridge.cv2_to_imgmsg(visualization, "bgr8"))
+            if visualization is not None:
+                self._pub_viz.publish(self._bridge.cv2_to_imgmsg(visualization, "bgr8"))
         except CvBridgeError as e:
             print(e)
 
@@ -114,7 +114,7 @@ class Detector(object):
             return None
         for box, score, category in zip(boxes, scores, classes):
             # Populate darknet message
-            left, top, right, bottom = box
+            left, bottom, right, top = box
             detection_msg = BoundingBox()
             detection_msg.xmin = left
             detection_msg.xmax = right

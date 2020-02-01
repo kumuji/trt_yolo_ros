@@ -749,7 +749,6 @@ def download_file(local_path, link, checksum_reference=None):
     if not os.path.exists(local_path):
         print("Downloading from %s, this may take a while..." % link)
         wget.download(link, local_path)
-        print()
     if checksum_reference is not None:
         checksum = generate_md5_checksum(local_path)
         if checksum != checksum_reference:
@@ -761,36 +760,53 @@ def download_file(local_path, link, checksum_reference=None):
     return local_path
 
 
-def build_onnx_engine(
-    weights_path="./",
-    cfg_path="./",
-    yolotype="yolov3-416",
-):
-    """Run the DarkNet-to-ONNX conversion for YOLOv3-608."""
+def replace_line(file_name, line_num, text):
+    # replacing line in file
+    lines = open(file_name, "r").readlines()
+    lines[line_num] = text
+    out = open(file_name, "w")
+    out.writelines(lines)
+    out.close()
+
+
+def build_onnx_engine(weights_path="./", cfg_path="./", yolotype="yolov3-416"):
+    """Run the DarkNet-to-ONNX conversion for YOLO."""
     # Have to use python 2 due to hashlib compatibility
     if sys.version_info[0] > 2:
         raise Exception(
             "This script is only compatible with python2, please re-run this script with python2. The rest of this sample can be run with either version of python."
         )
 
-    cfg_file_path = "%s.cfg" % yolotype
-    weights_file_path = "%s.weights" % yolotype
     output_file_path = "%s.onnx" % yolotype
-    if "tiny" not in yolotype:
-        yolo_dim = int(yolotype[-3:])
+    cfg_file_path = "%s.cfg" % yolotype
+
+    yolo_dim = int(yolotype[-3:])
+    if "tiny" in yolotype:
+        yolotype = "yolov3-tiny"
+    else:
         yolotype = "yolov3"
 
-    download_params = read_json("./download_params.json")
+    # weights are universal
+    weights_file_path = "%s.weights" % yolotype
 
-    if os.path(weights_file_path).exists():
-        print("using already downloaded file")
+    cfg_file_path = os.path.join(cfg_path, cfg_file_path)
+    weights_file_path = os.path.join(weights_path, weights_file_path)
+    output_file_path = os.path.join(weights_path, output_file_path)
+    download_param = os.path.join(cfg_path, "download_params.json")
+
+    print("Building ONNX graph for {}".format(yolotype))
+
+    download_params = read_json(download_param)
 
     # Download the config for YOLOv3 if not present yet, and analyze the checksum:
     cfg_file_path = download_file(
-        os.path.join(cfg_path, cfg_file_path),
-        download_params[yolotype]["weights"]["link"],
-        download_params[yolotype]["weights"]["checksum"],
+        cfg_file_path,
+        download_params[yolotype]["cfg"]["link"],
+        download_params[yolotype]["cfg"]["checksum"],
     )
+
+    replace_line(cfg_file_path, 7, "width=%i\n" % yolo_dim)
+    replace_line(cfg_file_path, 8, "height=%i\n" % yolo_dim)
 
     # These are the only layers DarkNetParser will extract parameters from. The three layers of
     # type 'yolo' are not parsed in detail because they are included in the post-processing later:
@@ -812,15 +828,16 @@ def build_onnx_engine(
     else:
         output_tensor_dims["082_convolutional"] = [255, yolo_dim // 32, yolo_dim // 32]
         output_tensor_dims["094_convolutional"] = [255, yolo_dim // 16, yolo_dim // 16]
-        output_tensor_dims["106_convolutional"] = [255, yolo_dim // 8,  yolo_dim // 8]
+        output_tensor_dims["106_convolutional"] = [255, yolo_dim // 8, yolo_dim // 8]
 
+    print("Building ONNX graph")
     # Create a GraphBuilderONNX object with the known output tensor dimensions:
     builder = GraphBuilderONNX(output_tensor_dims)
 
     # We want to populate our network with weights later, that's why we download those from
     # the official mirror (and verify the checksum):
     weights_file_path = download_file(
-        os.path.join(weights_path, weights_file_path),
+        weights_file_path,
         download_params[yolotype]["weights"]["link"],
         download_params[yolotype]["weights"]["checksum"],
     )
@@ -839,15 +856,13 @@ def build_onnx_engine(
     onnx.save(yolov3_model_def, output_file_path)
 
     download_file(
-        os.path.join(cfg_path, "coco-labels.txt"),
-        download_params["coco-labels"]["link"],
-        download_params["coco-labels"]["checksum"],
+        os.path.join(cfg_path, "coco_labels.txt"),
+        download_params["coco_labels"]["link"],
+        download_params["coco_labels"]["checksum"],
     )
 
 
 if __name__ == "__main__":
     build_onnx_engine(
-        weights_path="./",
-        cfg_path="./",
-        yolotype="yolov3-416",
+        weights_path="./", cfg_path="./", yolotype="yolov3-416"
     )
