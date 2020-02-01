@@ -1,3 +1,7 @@
+# Installation
+Make sure that tensorrt is installed on your system
+the easiest option - python -m pip install -r requirements.txt
+
 ## FIXME LIST
     * cleanup the code so it wouldn't publish garbage - done
     * include code for generating onnx models - done
@@ -11,3 +15,4 @@
 
 ## TODO LIST
     * also add option of running pytorch model
+    * add thread lock for image callback

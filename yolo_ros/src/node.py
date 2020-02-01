@@ -85,7 +85,6 @@ class Detector(object):
 
     @timeit
     def process_frame(self):
-        rospy.logdebug("[detector] processing frame")
         if (self.msg is None) or (self.msg.header is None):
             return
         # Initialize detection results
@@ -93,6 +92,7 @@ class Detector(object):
         detection_results.header = self.msg.header
         detection_results.image_header = self.msg.header
         self.msg = None
+        rospy.logdebug("[detector] processing frame")
         boxes, classes, scores, visualization = self.model(self.image)
         # and deleting the processed message from memmory
 
@@ -129,7 +129,8 @@ if __name__ == "__main__":
     rospy.init_node("detector")
     rospy.loginfo("[detector] starting the node")
     publish_rate = rospy.get_param("~publish_rate", 10)
-    rospy.Rate(publish_rate)
+    sleep_time = rospy.Rate(publish_rate)
     network = Detector()
     while not rospy.is_shutdown():
         network.process_frame()
+        sleep_time.sleep()
