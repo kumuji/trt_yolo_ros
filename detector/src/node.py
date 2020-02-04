@@ -103,7 +103,7 @@ class Detector(object):
         try:
             rospy.logdebug("[detector] publishing")
             self._pub.publish(detection_results)
-            if visualization is not None:
+            if self.publish_image:
                 self._pub_viz.publish(self._bridge.cv2_to_imgmsg(visualization, "bgr8"))
         except CvBridgeError as e:
             print(e)

@@ -58,8 +58,7 @@ class DarknetTRT(object):
         )
         self.postprocessor = PostprocessYOLO(postprocessor_cfg)
         self.drawer = None
-        if show_image:
-            self.drawer = Visualization(self.all_categories)
+        self.drawer = Visualization(self.all_categories)
 
     def __call__(self, image):
         padded_h_w, image_prepared = self.image_preparation(image)
@@ -88,8 +87,7 @@ class DarknetTRT(object):
             right = min(self.w, np.floor(x + width + 0.5).astype(int))
             bottom = min(self.h, np.floor(y + height + 0.5).astype(int))
             boxes[i] = [left, bottom, right, top]
-        if self.drawer is not None:
-            obj_detected_img = self.drawer(image, boxes, scores, classes)
+        obj_detected_img = self.drawer(image, boxes, scores, classes)
         return boxes, classes, scores, obj_detected_img
 
     def get_engine(self, weights_path, configs_path, yolo_type):

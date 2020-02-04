@@ -87,7 +87,7 @@ class DarkNetParser(object):
         Keyword argument:
         cfg_file_path -- path to the yolov3.cfg file as string
         """
-        with open(cfg_file_path, "rb") as cfg_file:
+        with open(cfg_file_path, "r") as cfg_file:
             remainder = cfg_file.read()
             while remainder is not None:
                 layer_dict, layer_name, remainder = self._next_layer(remainder)
@@ -391,7 +391,7 @@ class WeightLoader(object):
 class GraphBuilderONNX(object):
     """Class for creating an ONNX graph from a previously generated list of layer dictionaries."""
 
-    def __init__(self, output_tensors):
+    def __init__(self, model_name, output_tensors):
         """Initialize with all DarkNet default parameters used creating YOLOv3,
         and specify the output tensors as an OrderedDict for their output dimensions
         with their names as keys.
@@ -410,6 +410,7 @@ class GraphBuilderONNX(object):
         self.param_dict = OrderedDict()
         self.major_node_specs = list()
         self.batch_size = 1
+        self.model_name = model_name
 
     def build_onnx_graph(self, layer_configs, weights_file_path, verbose=True):
         """Iterate over all layer configs (parsed from the DarkNet representation
@@ -455,7 +456,7 @@ class GraphBuilderONNX(object):
         del weight_loader
         self.graph_def = helper.make_graph(
             nodes=self._nodes,
-            name="YOLOv3-608",
+            name=self.model_name,
             inputs=inputs,
             outputs=outputs,
             initializer=initializer,
@@ -492,6 +493,7 @@ class GraphBuilderONNX(object):
             node_creators = dict()
             node_creators["convolutional"] = self._make_conv_node
             node_creators["shortcut"] = self._make_shortcut_node
+            node_creators["maxpool"] = self._make_maxpool_node
             node_creators["route"] = self._make_route_node
             node_creators["upsample"] = self._make_resize_node
 
@@ -724,6 +726,33 @@ class GraphBuilderONNX(object):
         self.param_dict[layer_name] = resize_params
         return layer_name, channels
 
+    def _make_maxpool_node(self, layer_name, layer_dict):
+        """Create an ONNX Maxpool node with the properties from
+        the DarkNet-based graph.
+        Keyword arguments:
+        layer_name -- the layer's name (also the corresponding key in layer_configs)
+        layer_dict -- a layer parameter dictionary (one element of layer_configs)
+        """
+        stride = layer_dict["stride"]
+        kernel_size = layer_dict["size"]
+        previous_node_specs = self._get_previous_node_specs()
+        inputs = [previous_node_specs.name]
+        channels = previous_node_specs.channels
+        kernel_shape = [kernel_size, kernel_size]
+        strides = [stride, stride]
+        assert channels > 0
+        maxpool_node = helper.make_node(
+            "MaxPool",
+            inputs=inputs,
+            outputs=[layer_name],
+            kernel_shape=kernel_shape,
+            strides=strides,
+            auto_pad="SAME_UPPER",
+            name=layer_name,
+        )
+        self._nodes.append(maxpool_node)
+        return layer_name, channels
+
 
 def generate_md5_checksum(local_path):
     """Returns the MD5 checksum of a local file.
@@ -752,9 +781,10 @@ def download_file(local_path, link, checksum_reference=None):
     if checksum_reference is not None:
         checksum = generate_md5_checksum(local_path)
         if checksum != checksum_reference:
-            raise ValueError(
-                "The MD5 checksum of local file %s differs from %s, please manually remove \
-                 the file and try again."
+            print(
+                "\033[91m WARNING \
+                The MD5 checksum of local file %s differs from %s, please manually remove \
+                 the file and try again. \033[0m"
                 % (local_path, checksum_reference)
             )
     return local_path
@@ -807,10 +837,23 @@ def build_onnx_engine(weights_path="./", cfg_path="./", yolotype="yolov3-416"):
 
     replace_line(cfg_file_path, 7, "width=%i\n" % yolo_dim)
     replace_line(cfg_file_path, 8, "height=%i\n" % yolo_dim)
+    if "tiny" in yolotype:
+        # small fix, because yolo-tiny cfg doesn't not have
+        # one more symbol at the end which is critical for parsing
+        # FIXME
+        with open(cfg_file_path, "a") as f:
+            f.write("\n")
 
     # These are the only layers DarkNetParser will extract parameters from. The three layers of
     # type 'yolo' are not parsed in detail because they are included in the post-processing later:
-    supported_layers = ["net", "convolutional", "shortcut", "route", "upsample"]
+    supported_layers = [
+        "net",
+        "maxpool",
+        "convolutional",
+        "shortcut",
+        "route",
+        "upsample",
+    ]
 
     # Create a DarkNetParser object, and the use it to generate an OrderedDict with all
     # layer's configs from the cfg file:
@@ -832,7 +875,7 @@ def build_onnx_engine(weights_path="./", cfg_path="./", yolotype="yolov3-416"):
 
     print("Building ONNX graph")
     # Create a GraphBuilderONNX object with the known output tensor dimensions:
-    builder = GraphBuilderONNX(output_tensor_dims)
+    builder = GraphBuilderONNX(yolotype + "-" + str(yolo_dim), output_tensor_dims)
 
     # We want to populate our network with weights later, that's why we download those from
     # the official mirror (and verify the checksum):
@@ -863,6 +906,5 @@ def build_onnx_engine(weights_path="./", cfg_path="./", yolotype="yolov3-416"):
 
 
 if __name__ == "__main__":
-    build_onnx_engine(
-        weights_path="./", cfg_path="./", yolotype="yolov3-416"
-    )
+    build_onnx_engine(weights_path="./", cfg_path="./", yolotype="yolov3-416")
+
