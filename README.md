@@ -15,16 +15,12 @@ After that:
 ### Performance
 
 
-| Model type      | Device  | Inference time | ~FPS    |
-| --------------- | ------  | -------------- | ------- |
-| yolov3-tiny-288 | GTX1080 | 10 ms          | 100     |
-| yolov3-tiny-416 | GTX1080 | 13 ms          | 75      |
-| yolov3-416      | GTX1080 | 34 ms          | 29      |
-| yolov3-608      | GTX1080 | 60 ms          | 16      |
-| yolov3-tiny-288 | Xavier  | 25 ms          | 40      |
-| yolov3-tiny-416 | Xavier  | 30 ms          | 33      |
-| yolov3-416      | Xavier  | 95 ms          | 11      |
-| yolov3-608      | Xavier  | 190 ms         | 5       |
+| Model           | GTX1080 | Xavier  | nano   |
+| --------------- | ------- | ------- | ------ |
+| yolov3-tiny-288 | 10 ms   | 25 ms   | 80 ms  |
+| yolov3-tiny-416 | 13 ms   | 30 ms   | 135 ms |
+| yolov3-416      | 34 ms   | 95 ms   | 660 ms |
+| yolov3-608      | 60 ms   | 195 ms  | x ms   |
 
 ### Licenses
 --------
