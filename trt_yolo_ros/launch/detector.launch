@@ -1,0 +1,6 @@
+<launch>
+  <node pkg="trt_yolo_ros" type="node.py" name="trt_yolo_ros" output="screen">
+    <rosparam command="load" file="$(find trt_yolo_ros)/config/detector.yaml"/>
+    <rosparam command="load" file="$(find trt_yolo_ros)/config/topics.yaml"/>
+  </node>
+</launch>

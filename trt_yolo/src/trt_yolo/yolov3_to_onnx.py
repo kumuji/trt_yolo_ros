@@ -50,9 +50,11 @@
 
 from __future__ import print_function
 
+import re
 import hashlib
 import os.path
 import sys
+import argparse
 from collections import OrderedDict
 
 import numpy as np
@@ -799,50 +801,45 @@ def replace_line(file_name, line_num, text):
     out.close()
 
 
-def build_onnx_engine(weights_path="./", cfg_path="./", yolotype="yolov3-416"):
-    """Run the DarkNet-to-ONNX conversion for YOLO."""
-    # Have to use python 2 due to hashlib compatibility
-    if sys.version_info[0] > 2:
-        raise Exception(
-            "This script is only compatible with python2, please re-run this script with python2. The rest of this sample can be run with either version of python."
-        )
+def build_onnx_engine(
+    weights_folder_path="./", cfg_folder_path="./", yolo_type="yolov3-416"
+):
+    """Run the DarkNet-to-ONNX conversion for YOLO.
 
-    output_file_path = "%s.onnx" % yolotype
-    cfg_file_path = "%s.cfg" % yolotype
+    Script assumes that you have weights with name [yolo_type_without_dimension].weights and
+    [yolo_type_without_dimension].cfg in weights and configs folders. It will also create onnx with name
+    [yolo_type].cfg
 
-    yolo_dim = int(yolotype[-3:])
-    if "tiny" in yolotype:
-        yolotype = "yolov3-tiny"
-    else:
-        yolotype = "yolov3"
+    Names "yolov3" and "yolov3-tiny" reserved for the original yolo, and script will try to download them
+    ---
+    Example:
+        yolo_type="my-type-416", weights_folder_path="./weights", cfg_folder_path="./"
+        expected files:
+            ./weights/my-type.weights, ./my-type.cfg
+        output:
+            ./weights/my-type-416.onnx
 
-    # weights are universal
-    weights_file_path = "%s.weights" % yolotype
+        yolo_type="my-type-tiny-416", weights_folder_path="./weights", cfg_folder_path="./"
+        expected files:
+            ./weights/my-type-tiny.weights, ./my-type.cfg
+        output:
+            ./weights/my-type-tiny-416.onnx
+    """
+    output_file_name = "%s.onnx" % yolo_type
 
-    cfg_file_path = os.path.join(cfg_path, cfg_file_path)
-    weights_file_path = os.path.join(weights_path, weights_file_path)
-    output_file_path = os.path.join(weights_path, output_file_path)
-    download_param = os.path.join(cfg_path, "download_params.json")
+    yolo_dim = int(re.search(r"\d+$", yolo_type).group())
+    yolo_type = re.search(r".+?(?=\-\d+$)", yolo_type).group()
+    cfg_file_name = "%s.cfg" % yolo_type
+    weights_file_name = "%s.weights" % yolo_type
 
-    print("Building ONNX graph for {}".format(yolotype))
+    cfg_file_path = os.path.join(cfg_folder_path, cfg_file_name)
+    weights_file_path = os.path.join(weights_folder_path, weights_file_name)
+    output_file_path = os.path.join(weights_folder_path, output_file_name)
 
-    download_params = read_json(download_param)
-
-    # Download the config for YOLOv3 if not present yet, and analyze the checksum:
-    cfg_file_path = download_file(
-        cfg_file_path,
-        download_params[yolotype]["cfg"]["link"],
-        download_params[yolotype]["cfg"]["checksum"],
-    )
+    print("Building ONNX graph for {}".format(yolo_type))
 
     replace_line(cfg_file_path, 7, "width=%i\n" % yolo_dim)
     replace_line(cfg_file_path, 8, "height=%i\n" % yolo_dim)
-    if "tiny" in yolotype:
-        # small fix, because yolo-tiny cfg doesn't not have
-        # one more symbol at the end which is critical for parsing
-        # FIXME
-        with open(cfg_file_path, "a") as f:
-            f.write("\n")
 
     # These are the only layers DarkNetParser will extract parameters from. The three layers of
     # type 'yolo' are not parsed in detail because they are included in the post-processing later:
@@ -865,7 +862,7 @@ def build_onnx_engine(weights_path="./", cfg_path="./", yolotype="yolov3-416"):
     # In above layer_config, there are three outputs that we need to know the output
     # shape of (in CHW format):
     output_tensor_dims = OrderedDict()
-    if "tiny" in yolotype:
+    if "tiny" in yolo_type:
         output_tensor_dims["016_convolutional"] = [255, yolo_dim // 32, yolo_dim // 32]
         output_tensor_dims["023_convolutional"] = [255, yolo_dim // 16, yolo_dim // 16]
     else:
@@ -875,17 +872,19 @@ def build_onnx_engine(weights_path="./", cfg_path="./", yolotype="yolov3-416"):
 
     print("Building ONNX graph")
     # Create a GraphBuilderONNX object with the known output tensor dimensions:
-    builder = GraphBuilderONNX(yolotype + "-" + str(yolo_dim), output_tensor_dims)
+    builder = GraphBuilderONNX(yolo_type + "-" + str(yolo_dim), output_tensor_dims)
 
-    # We want to populate our network with weights later, that's why we download those from
-    # the official mirror (and verify the checksum):
-    weights_file_path = download_file(
-        weights_file_path,
-        download_params[yolotype]["weights"]["link"],
-        download_params[yolotype]["weights"]["checksum"],
-    )
     # Now generate an ONNX graph with weights from the previously parsed layer configurations
     # and the weights file:
+
+    if yolo_type in ["yolov3", "yolov3-tiny"]:
+        download_params = read_json(os.path.join(cfg_folder_path, "download_params.json"))
+        weights_file_path = download_file(
+            weights_file_path,
+            download_params[yolo_type]["weights"]["link"],
+            download_params[yolo_type]["weights"]["checksum"],
+        )
+
     yolov3_model_def = builder.build_onnx_graph(
         layer_configs=layer_configs, weights_file_path=weights_file_path, verbose=True
     )
@@ -898,13 +897,12 @@ def build_onnx_engine(weights_path="./", cfg_path="./", yolotype="yolov3-416"):
     # Serialize the generated ONNX graph to this file:
     onnx.save(yolov3_model_def, output_file_path)
 
-    download_file(
-        os.path.join(cfg_path, "coco_labels.txt"),
-        download_params["coco_labels"]["link"],
-        download_params["coco_labels"]["checksum"],
-    )
-
 
 if __name__ == "__main__":
-    build_onnx_engine(weights_path="./", cfg_path="./", yolotype="yolov3-416")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("wfp", "weights_folder_path", default="./", help="Path to the folder with weights")
+    parser.add_argument("cfp", "cfg_folder_path", default="./", help="Path to the folder with configs")
+    parser.add_argument("type", "yolo_type", default="yolov3-416", help="Type of yolo to use")
+    args = parser.parse_args()
+    build_onnx_engine(**args)
 

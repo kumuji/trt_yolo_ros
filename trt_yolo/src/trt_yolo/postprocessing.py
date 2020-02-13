@@ -2,215 +2,27 @@ from __future__ import division, print_function
 
 import os
 
-import rospy
-
 import cv2
 import numpy as np
-import pycuda.autoinit  # nescessary for initializing cuda cards
-import pycuda.driver as cuda
-import tensorrt as trt
+
 from utils import read_json
-from yolov3_to_onnx import build_onnx_engine
-
-
-class DarknetTRT(object):
-    def __init__(
-        self,
-        obj_threshold=0.6,
-        nms_threshold=0.7,
-        yolo_type="yolov3-416",  # also supported v3-tiny
-        weights_path="./weights/",
-        config_path="./config/",
-        label_filename="coco_labels.txt",
-        postprocessor_cfg="yolo_postprocess_config.json",
-        cuda_device=0,
-        show_image=False,
-    ):
-        # input to the node node
-        dim = int(yolo_type[-3:])
-        self.yolo_h_w = (dim, dim)
-        self.h = 0
-        self.w = 0
-        self.show_image = show_image
-        # input to the model
-
-        # allocating memmory on gpu
-        self.trt_logger = trt.Logger()
-        self.engine = self.get_engine(weights_path, config_path, yolo_type)
-        self.inputs, self.outputs, self.bindings, self.stream = self._allocate_buffers()
-        self.context = self.engine.create_execution_context()
-        self.all_categories = [
-            line.rstrip("\n")
-            for line in open(os.path.join(config_path, label_filename))
-        ]
-
-        # reading yolo parameters for processing
-        yolo_type = "yolov3-tiny" if "tiny" in yolo_type else "yolov3"
-        postprocessor_cfg = os.path.join(config_path, postprocessor_cfg)
-        postprocessor_cfg = read_json(postprocessor_cfg)[yolo_type]
-        postprocessor_cfg.update(
-            {
-                "obj_threshold": obj_threshold,  # Threshold for object coverage, float value between 0 and 1
-                "nms_threshold": nms_threshold,  # Threshold for non-max suppression algorithm, float value between 0 and 1
-                "yolo_input_resolution": self.yolo_h_w,
-                "class_num": len(self.all_categories),
-            }
-        )
-        self.postprocessor = PostprocessYOLO(postprocessor_cfg)
-        self.drawer = None
-        self.drawer = Visualization(self.all_categories)
-
-    def __call__(self, image):
-        padded_h_w, image_prepared = self.image_preparation(image)
-
-        trt_outputs = []
-        self.inputs[0].host = image_prepared
-        trt_outputs = self.do_inference(
-            context=self.context,
-            bindings=self.bindings,
-            inputs=self.inputs,
-            outputs=self.outputs,
-            stream=self.stream,
-        )
-
-        boxes, classes, scores = self.postprocessor.process(trt_outputs, padded_h_w)
-        # Draw the bounding boxes onto the original input image and save it as a PNG file
-        obj_detected_img = image
-        if boxes is None:
-            return boxes, classes, scores, obj_detected_img
-        for i in range(len(boxes)):
-            x, y, width, height = boxes[i]
-            x = x - ((padded_h_w[1] - self.w) // 2)
-            y = y - ((padded_h_w[0] - self.h) // 2)
-            left = max(0, np.floor(x + 0.5).astype(int))
-            top = max(0, np.floor(y + 0.5).astype(int))
-            right = min(self.w, np.floor(x + width + 0.5).astype(int))
-            bottom = min(self.h, np.floor(y + height + 0.5).astype(int))
-            boxes[i] = [left, bottom, right, top]
-        obj_detected_img = self.drawer(image, boxes, scores, classes)
-        return boxes, classes, scores, obj_detected_img
-
-    def get_engine(self, weights_path, configs_path, yolo_type):
-        """Attempts to load a serialized engine if available, otherwise builds a new TensorRT engine and saves it."""
-        engine_file_name = "%s.trt" % yolo_type
-        engine_file_path = os.path.join(weights_path, engine_file_name)
-        if not os.path.exists(engine_file_path):
-            self.build_trt_engine(weights_path, configs_path, yolo_type)
-        # If a serialized engine exists, use it instead of building an engine.
-        rospy.logdebug("Reading engine from file {}".format(engine_file_path))
-        with open(engine_file_path, "rb") as f, trt.Runtime(self.trt_logger) as runtime:
-            return runtime.deserialize_cuda_engine(f.read())
-
-    def build_trt_engine(self, weights_path, configs_path, yolo_type):
-        """Takes an ONNX file and creates a TensorRT engine to run inference with"""
-        rospy.logdebug("Building trt engine file")
-        onnx_file_name = "%s.onnx" % yolo_type
-        engine_file_name = "%s.trt" % yolo_type
-        onnx_file_path = os.path.join(weights_path, onnx_file_name)
-        engine_file_path = os.path.join(weights_path, engine_file_name)
-        if not os.path.exists(onnx_file_path):
-            build_onnx_engine(weights_path, configs_path, yolo_type)
-        with trt.Builder(
-            self.trt_logger
-        ) as builder, builder.create_network() as network, trt.OnnxParser(
-            network, self.trt_logger
-        ) as parser:
-            builder.max_workspace_size = 1 << 28  # 256MiB
-            builder.max_batch_size = 1
-            # Parse model file
-            rospy.loginfo("Loading ONNX file from path {}...".format(onnx_file_path))
-            with open(onnx_file_path, "rb") as model:
-                rospy.loginfo("Beginning ONNX file parsing")
-                parser.parse(model.read())
-            rospy.loginfo("Completed parsing of ONNX file")
-            rospy.loginfo(
-                "Building an engine from file {}; this may take a while...".format(
-                    onnx_file_path
-                )
-            )
-            engine = builder.build_cuda_engine(network)
-            rospy.loginfo("Completed creating Engine")
-            with open(engine_file_path, "wb") as f:
-                f.write(engine.serialize())
-
-    def _allocate_buffers(self):
-        inputs = []
-        outputs = []
-        bindings = []
-        stream = cuda.Stream()
-        for binding in self.engine:
-            size = (
-                trt.volume(self.engine.get_binding_shape(binding))
-                * self.engine.max_batch_size
-            )
-            dtype = trt.nptype(self.engine.get_binding_dtype(binding))
-            host_mem = cuda.pagelocked_empty(size, dtype)
-            device_mem = cuda.mem_alloc(host_mem.nbytes)
-            bindings.append(int(device_mem))
-            if self.engine.binding_is_input(binding):
-                inputs.append(HostDeviceMem(host_mem, device_mem))
-            else:
-                outputs.append(HostDeviceMem(host_mem, device_mem))
-        return inputs, outputs, bindings, stream
-
-    @staticmethod
-    def do_inference(context, bindings, inputs, outputs, stream, batch_size=1):
-        [cuda.memcpy_htod_async(inp.device, inp.host, stream) for inp in inputs]
-        context.execute_async(
-            batch_size=batch_size, bindings=bindings, stream_handle=stream.handle
-        )
-        [cuda.memcpy_dtoh_async(out.host, out.device, stream) for out in outputs]
-        stream.synchronize()
-        return [out.host for out in outputs]
-
-    def image_preparation(self, img_raw):
-        """ Extract image and shape """
-        height, width, channels = img_raw.shape
-        if (height != self.h) or (width != self.w):
-            self.h = height
-            self.w = width
-
-            # Determine image to be used
-        padded_image = np.zeros(
-            (max(self.h, self.w), max(self.h, self.w), channels)
-        ).astype(float)
-
-        # Add padding
-        if self.w > self.h:
-            padded_image[
-                (self.w - self.h) // 2 : self.h + (self.w - self.h) // 2, :, :
-            ] = img_raw
-        else:
-            padded_image[
-                :, (self.h - self.w) // 2 : self.w + (self.h - self.w) // 2, :
-            ] = img_raw
-        height, width, _ = padded_image.shape
-
-        # Resize and normalize
-        input_img = cv2.resize(padded_image, self.yolo_h_w) / 255
-        input_img = input_img.transpose((2, 0, 1))  # HWC to CHW format
-        input_img = np.array(input_img, dtype=np.float32, order="C")
-        input_img = np.expand_dims(input_img, axis=0)  # CHW to NCHW format
-        return (height, width), input_img
-
-
-# Simple helper data class that's a little nicer to use than a 2-tuple.
-class HostDeviceMem(object):
-    def __init__(self, host_mem, device_mem):
-        self.host = host_mem
-        self.device = device_mem
-
-    def __str__(self):
-        return "Host:\n" + str(self.host) + "\nDevice:\n" + str(self.device)
-
-    def __repr__(self):
-        return self.__str__()
 
 
 class PostprocessYOLO(object):
-    """Class for post-processing the three outputs tensors from YOLO."""
+    """Class for post-processing the three outputs tensors from YOLO.
 
-    def __init__(self, postprocessor_args):
+    It is mostly written by NVIDIA
+    """
+
+    def __init__(
+        self,
+        yolo_type,
+        config_path,
+        obj_threshold,
+        nms_threshold,
+        input_resolution,
+        class_num,
+    ):
         """Initialize with all values that will be kept when processing several frames.
         Assuming 3 outputs of the network in the case of (large) YOLOv3.
 
@@ -219,27 +31,22 @@ class PostprocessYOLO(object):
         yolo_anchors -- a list of 9 two-dimensional tuples for the YOLO anchors
         object_threshold -- threshold for object coverage, float value between 0 and 1
         nms_threshold -- threshold for non-max suppression algorithm, float value between 0 and 1
-        input_resolution_yolo -- input resolution in HW order
+        input_resolution -- input resolution in HW order
         """
         # initializing parameters for the postprocessing node
-        postprocessor_args["output_shapes"] = [
-            tuple(
-                [
-                    a,
-                    b,
-                    postprocessor_args["yolo_input_resolution"][0] // c,
-                    postprocessor_args["yolo_input_resolution"][1] // d,
-                ]
-            )
-            for a, b, c, d in postprocessor_args["output_shapes"]
+        self.object_threshold = obj_threshold
+        self.nms_threshold = nms_threshold
+        self.class_num = class_num
+        self.input_resolution = input_resolution
+        # reading paramters from config file
+        yolo_type = "yolov3-tiny" if "tiny" in yolo_type else "yolov3"
+        postprocessor_cfg = read_json(config_path)[yolo_type]
+        self.masks = postprocessor_cfg["masks"]
+        self.anchors = postprocessor_cfg["anchors"]
+        self.output_shapes = [
+            tuple([a, b, input_resolution[0] // c, input_resolution[1] // d,])
+            for a, b, c, d in postprocessor_cfg["output_shapes"]
         ]
-        self.masks = postprocessor_args["masks"]
-        self.anchors = postprocessor_args["anchors"]
-        self.object_threshold = postprocessor_args["obj_threshold"]
-        self.nms_threshold = postprocessor_args["nms_threshold"]
-        self.input_resolution_yolo = postprocessor_args["yolo_input_resolution"]
-        self.class_num = postprocessor_args["class_num"]
-        self.output_shapes = postprocessor_args["output_shapes"]
 
     def process(self, outputs, resolution_raw):
         """Take the YOLOv3 outputs generated from a TensorRT forward pass, post-process them
@@ -371,7 +178,7 @@ class PostprocessYOLO(object):
 
         box_xy += grid
         box_xy /= (grid_w, grid_h)
-        box_wh /= self.input_resolution_yolo
+        box_wh /= self.input_resolution
         box_xy -= box_wh / 2.0
         boxes = np.concatenate((box_xy, box_wh), axis=-1)
 
@@ -453,14 +260,13 @@ class PostprocessYOLO(object):
 
 
 class Visualization(object):
+    """ Visualization class that takes boxes and places them on image """
     def __init__(
         self,
-        possible_lables,
-        font_scale=0.8,
-        thickness=2,
+        font_scale=0.5,
+        thickness=1,
         font=cv2.FONT_HERSHEY_SIMPLEX,
     ):
-        self.possible_lables = possible_lables
         self.font_scale = font_scale
         self.thickness = thickness
         self.font = font
@@ -471,7 +277,6 @@ class Visualization(object):
             return image_raw
         # Copy image and visualize
         for box, score, label in zip(angles, confidences, labels):
-            label = self.possible_lables[label]
             left, bottom, right, top = box
 
             # Find class color
@@ -490,11 +295,11 @@ class Visualization(object):
                 (color[0], color[1], color[2]),
                 self.thickness,
             )
-            text = ("{:s}: {:.2f}").format(label, score)
+            text = ("{:s}:{:.2f}").format(label, score)
             cv2.putText(
                 image_raw,
                 text,
-                (int(left), int(bottom + 20)),
+                (int(left), int(bottom - 10)),
                 self.font,
                 self.font_scale,
                 (255, 255, 255),

@@ -2,15 +2,15 @@
 <launch>
     <!-- subsribers and publishers -->
     <arg name =         "subscriber/image/topic" default = "/camera/color/image_raw"/>
-    <arg name = "publisher/bounding_boxes/topic" default = "/detector/bounding_boxes"/>
-    <arg name =          "publisher/image/topic" default = "/detector/bounding_boxes/image"/>
+    <arg name = "publisher/bounding_boxes/topic" default = "/trt_yolo_ros/bounding_boxes"/>
+    <arg name =          "publisher/image/topic" default = "/trt_yolo_ros/bounding_boxes/image"/>
     <!-- how often run the yolo? -->
     <arg name =                   "publish_rate" default = "10"/>
     <!-- Would you like to publish visualization, might slow don the process -->
     <arg name =                  "publish_image" default = "true"/>
     <!-- path to weights, this folder might get big if you have mutliple engines -->
-    <arg name =                   "weights_path" default = "$(find detector)/weights/"/>
-    <arg name =                    "config_path" default = "$(find detector)/config/"/>
+    <arg name =                   "weights_path" default = "$(find trt_yolo)/weights/"/>
+    <arg name =                    "config_path" default = "$(find trt_yolo)/config/"/>
     <arg name =                 "label_filename" default = "coco_labels.txt"/>
     <!-- YOLO configs -->
     <!-- type of yolo to run, supported types: -->
@@ -29,7 +29,7 @@
     <arg name =                    "cuda_device" default = "0"/>
 
     <!-- Node -->
-    <node name="detector" pkg="detector" type="node.py" output="screen" respawn="true">
+    <node name="trt_yolo_ros" pkg="trt_yolo_ros" type="node.py" output="screen" respawn="true">
         <param name =         "subscriber/image/topic" value = "$(arg subscriber/image/topic)"/>
         <param name = "publisher/bounding_boxes/topic" value = "$(arg publisher/bounding_boxes/topic)"/>
         <param name =          "publisher/image/topic" value = "$(arg publisher/image/topic)"/>

@@ -1,6 +1,0 @@
-<launch>
-  <node pkg="detector" type="node.py" name="detector" output="screen">
-    <rosparam command="load" file="$(find detector)/config/detector.yaml"/>
-    <rosparam command="load" file="$(find detector)/config/topics.yaml"/>
-  </node>
-</launch>

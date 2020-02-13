@@ -1,0 +1,14 @@
+{
+    "yolov3": {
+        "weights": {
+            "link": "https://pjreddie.com/media/files/yolov3.weights",
+            "checksum": "c84e5b99d0e52cd466ae710cadf6d84c"
+        }
+    },
+    "yolov3-tiny": {
+        "weights": {
+            "link": "https://pjreddie.com/media/files/yolov3-tiny.weights",
+            "checksum": "3bcd6b390912c18924b46b26a9e7ff53"
+        }
+    }
+}

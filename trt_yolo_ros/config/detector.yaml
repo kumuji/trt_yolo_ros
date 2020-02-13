@@ -5,8 +5,8 @@ publish_rate: 10
 publish_image: false
 
 # paths to all of the files
-weights_path: "../weights"
-config_path: "../config"
+weights_path: "./weights"
+config_path: "./config"
 label_filename: "coco_labels.txt"
 
 # YOLO configs

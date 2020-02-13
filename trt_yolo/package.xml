@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<package>
+  <name>trt_yolo</name>
+  <version>0.0.1</version>
+  <description> YOLOv3 and v3-tiny working with tensorrt.</description>
+
+  <author email="alexey.nekrasov@rwth-aachen.de"></author>
+  <maintainer email="alexey.nekrasov@rwth-aachen.de"></maintainer>
+
+  <license>i_dont_care_but_some_code_is_from_nvidia</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+</package>

@@ -1,16 +1,14 @@
 <?xml version="1.0"?>
 <package>
-  <name>detector</name>
+  <name>trt_yolo_ros</name>
   <version>0.0.1</version>
-  <description>This package provides detector with possibility of running using tensorrt.</description>
+  <description>This package is a ROS interface for YOLOv3 with tensorrt.</description>
 
   <maintainer email="alexey.nekrasov@rwth-aachen.de"></maintainer>
 
-  <license>whatever</license>
-
   <author email="alexey.nekrasov@rwth-aachen.de"></author>
 
-  <license>whatever</license>
+  <license>whatever_half_code_is_owned_by_nvidia_anyway</license>
 
   <buildtool_depend>catkin</buildtool_depend>
   <run_depend>rospy</run_depend>
@@ -18,5 +16,6 @@
   <run_depend>sensor_msgs</run_depend>
   <run_depend>cv_bridge</run_depend>
   <run_depend>darknet_ros_msgs</run_depend>
+  <run_depend>trt_yolo</run_depend>
 
 </package>

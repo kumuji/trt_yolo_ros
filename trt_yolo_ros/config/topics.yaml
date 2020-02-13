@@ -1,11 +1,11 @@
 publisher:
     bounding_boxes:
-        topic: /detector/bounding_boxes
+        topic: /trt_yolo_ros/bounding_boxes
         queue_size: 10
         latch: false
 
     image:
-        topic: /detector/bounding_boxes/image
+        topic: /trt_yolo_ros/bounding_boxes/image
         queue_size: 1
         latch: false
 
