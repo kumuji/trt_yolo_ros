@@ -8,12 +8,12 @@ from sensor_msgs.msg import Image
 from trt_yolo.detector import DarknetTRT
 from utils import timeit_ros
 
+import Queue as queue
 
 class YOLORos(object):
     def __init__(self):
         self._bridge = CvBridge()
         self._read_params()
-        self._init_topics()
         self.model = DarknetTRT(
             obj_threshold=self.obj_threshold,
             nms_threshold=self.nms_threshold,
@@ -25,7 +25,8 @@ class YOLORos(object):
             cuda_device=self.cuda_device,
             show_image=self.publish_image,
         )
-        self.msg = None
+        self._init_topics()
+        self.msg_queue = queue.Queue(maxsize = 5)
         rospy.loginfo("[trt_yolo_ros] loaded and ready")
 
     def _read_params(self):
@@ -44,6 +45,8 @@ class YOLORos(object):
         self.nms_threshold = rospy.get_param("~nms_threshold", 0.3)
         # default cuda device
         self.cuda_device = rospy.get_param("~cuda_device", 0)
+        self.num_cameras = rospy.get_param("~num_cam", 1)
+        print(self.num_cameras)
         rospy.logdebug("[trt_yolo_ros] parameters read")
 
     @staticmethod
@@ -72,22 +75,29 @@ class YOLORos(object):
         self._pub_viz = rospy.Publisher(
             topic, Image, queue_size=queue_size, latch=latch
         )
-        # Subscriber
-        topic, queue_size = self._read_subscriber_param("image")
-        self._image_sub = rospy.Subscriber(
-            topic, Image, self._image_callback, queue_size=queue_size, buff_size=2 ** 24
+        # Image Subscriber
+        for i in range(self.num_cameras):
+            topic, queue_size = self._read_subscriber_param("image" + str(i)) 
+            self._image_sub = rospy.Subscriber(
+                topic, Image, self._image_callback, queue_size=queue_size, buff_size=2 ** 24
         )
         rospy.logdebug("[trt_yolo_ros] publishers and subsribers initialized")
 
     def _image_callback(self, msg):
         """ Main callback which is saving the last received image """
-        self.msg = None
-        try:
-            self.image = self._bridge.imgmsg_to_cv2(msg, "bgr8")
-            self.msg = msg
-            rospy.logdebug("[trt_yolo_ros] image received")
-        except CvBridgeError as e:
-            print(e)
+        #rospy.logdebug("[trt_yolo_ros] Incoming image")
+        if msg.header != None:
+            self.msg_queue.put(msg)
+            #rospy.logdebug("[trt_yolo_ros] image recieved")
+
+            #self.msg = None
+            #try:
+            #    self.image = self._bridge.imgmsg_to_cv2(msg, "bgr8")
+            #    self.msg = msg
+            #    rospy.logdebug("[trt_yolo_ros] image received")
+            #except CvBridgeError as e:
+            #    rospy.logdebug("Failed to convert image %s" , str(e))
+            #    print(e)
 
     def _write_message(self, detection_results, boxes, scores, classes):
         """ populate output message with input header and bounding boxes information """
@@ -109,26 +119,30 @@ class YOLORos(object):
     @timeit_ros
     def process_frame(self):
         """ Main function to process the frame and run the infererence """
-        if self.msg is None:
-            return
-        # Initialize detection results
-        detection_results = BoundingBoxes()
-        detection_results.header = self.msg.header
-        detection_results.image_header = self.msg.header
-        self.msg = None
-        rospy.logdebug("[trt_yolo_ros] processing frame")
-        boxes, classes, scores, visualization = self.model(self.image)
-        # and deleting the processed message from memmory
-
-        # construct message
-        self._write_message(detection_results, boxes, scores, classes)
-
-        # send message
+        # Deque the next image msg
+        current_msg = self.msg_queue.get()
+        current_image = None
+        # Convert to image to OpenCV format
         try:
-            rospy.logdebug("[trt_yolo_ros] publishing")
-            self._pub.publish(detection_results)
-            if self.publish_image:
-                self._pub_viz.publish(self._bridge.cv2_to_imgmsg(visualization, "bgr8"))
+            current_image = self._bridge.imgmsg_to_cv2(current_msg, "bgr8")
+            rospy.logdebug("[trt_yolo_ros] image converted for processing")
         except CvBridgeError as e:
-            print(e)
+            rospy.logdebug("Failed to convert image %s" , str(e))
+        # Initialize detection results
+        if current_image is not None:
+            boxes, classes, scores, visualization = self.model(current_image)
+            detection_results = BoundingBoxes()
+            detection_results.header = current_msg.header
+            detection_results.image_header = current_msg.header
+            rospy.logdebug("[trt_yolo_ros] processing frame")
+            # construct message
+            self._write_message(detection_results, boxes, scores, classes)
+            # send message
+            try:
+                rospy.logdebug("[trt_yolo_ros] publishing")
+                self._pub.publish(detection_results)
+                if self.publish_image:
+                    self._pub_viz.publish(self._bridge.cv2_to_imgmsg(visualization, "bgr8"))
+            except CvBridgeError as e:
+                rospy.logdebug("Failed to convert image %s" , str(e))
 
