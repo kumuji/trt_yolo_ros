@@ -5,7 +5,7 @@ from trt_yolo_ros.trt_yolo_ros import YOLORos
 
 
 if __name__ == "__main__":
-    rospy.init_node("trt_yolo_ros", log_level=rospy.DEBUG)
+    rospy.init_node("trt_yolo_ros", log_level=rospy.INFO)
     rospy.loginfo("[trt_yolo_ros] starting the node")
     try:
         network = YOLORos()

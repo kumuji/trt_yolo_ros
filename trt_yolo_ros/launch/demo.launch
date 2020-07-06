@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
     <!-- subsribers and publishers -->
-    <arg name =         "subscriber/image0/topic" default = "/csi_cam_0/image_raw"/>
+    <arg name =         "subscriber/image0/topic" default = "/camera/color/image_raw"/>
     <arg name = "publisher/bounding_boxes/topic" default = "/trt_yolo_ros/bounding_boxes"/>
     <arg name =          "publisher/image/topic" default = "/trt_yolo_ros/bounding_boxes/image"/>
     <!-- how often run the yolo? -->
