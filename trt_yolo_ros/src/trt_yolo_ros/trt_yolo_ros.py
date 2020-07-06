@@ -85,20 +85,10 @@ class YOLORos(object):
 
     def _image_callback(self, msg):
         """ Main callback which is saving the last received image """
-        #rospy.logdebug("[trt_yolo_ros] Incoming image")
         if msg.header != None:
             self.msg_queue.put(msg)
-            #rospy.logdebug("[trt_yolo_ros] image recieved")
-
-            #self.msg = None
-            #try:
-            #    self.image = self._bridge.imgmsg_to_cv2(msg, "bgr8")
-            #    self.msg = msg
-            #    rospy.logdebug("[trt_yolo_ros] image received")
-            #except CvBridgeError as e:
-            #    rospy.logdebug("Failed to convert image %s" , str(e))
-            #    print(e)
-
+            rospy.logdebug("[trt_yolo_ros] image recieved")
+            
     def _write_message(self, detection_results, boxes, scores, classes):
         """ populate output message with input header and bounding boxes information """
         if boxes is None:
