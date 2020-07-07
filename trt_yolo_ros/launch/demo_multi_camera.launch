@@ -1,11 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
     <!-- subsribers and publishers -->
-    <arg name =         "subscriber/image0/topic" default = "/camera/color/image_raw"/>
+    <!-- For multiple Cameras change num_cam and add in "subscriber/imageX/topic
+        X should be sequential numbers form 0-num_cam This needs to be done in the
+        arg section and param section
+    -->
+    <arg name =         "subscriber/image0/topic" default = "/csi_cam_0/image_raw"/>
+    <arg name =         "subscriber/image1/topic" default = "/csi_cam_1/image_raw"/>
+    <arg name =         "subscriber/image2/topic" default = "/csi_cam_3/image_raw"/>
+    <arg name =         "subscriber/image3/topic" default = "/csi_cam_4/image_raw"/>
     <arg name = "publisher/bounding_boxes/topic" default = "/trt_yolo_ros/bounding_boxes"/>
     <arg name =          "publisher/image/topic" default = "/trt_yolo_ros/bounding_boxes/image"/>
     <!-- how often run the yolo? -->
-    <arg name =                   "publish_rate" default = "10"/>
+    <arg name =                   "publish_rate" default = "20"/>
     <!-- Would you like to publish visualization, might slow don the process -->
     <arg name =                  "publish_image" default = "true"/>
     <!-- path to weights, this folder might get big if you have mutliple engines -->
@@ -27,11 +34,15 @@
     <arg name =              "postprocessor_cfg" default = "yolo_postprocess_config.json"/>
     <!-- Device to run the inference on. Sorry, no multiple devices for now -->
     <arg name =                    "cuda_device" default = "0"/>
-    <arg name =                    "num_cam"     default = "1"/>
+    <arg name =                    "num_cam"     default = "2"/>
+
 
     <!-- Node -->
     <node name="trt_yolo_ros" pkg="trt_yolo_ros" type="node.py" output="screen" respawn="true">
         <param name =         "subscriber/image0/topic" value = "$(arg subscriber/image0/topic)"/>
+        <param name =         "subscriber/image1/topic" value = "$(arg subscriber/image1/topic)"/>
+        <param name =         "subscriber/image2/topic" value = "$(arg subscriber/image2/topic)"/>
+        <param name =         "subscriber/image3/topic" value = "$(arg subscriber/image3/topic)"/>
         <param name = "publisher/bounding_boxes/topic" value = "$(arg publisher/bounding_boxes/topic)"/>
         <param name =          "publisher/image/topic" value = "$(arg publisher/image/topic)"/>
         <param name =                   "publish_rate" value = "$(arg publish_rate)"/>
