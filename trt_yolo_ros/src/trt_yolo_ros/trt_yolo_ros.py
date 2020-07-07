@@ -46,7 +46,7 @@ class YOLORos(object):
         # default cuda device
         self.cuda_device = rospy.get_param("~cuda_device", 0)
         self.num_cameras = rospy.get_param("~num_cam", 1)
-        print(self.num_cameras)
+        rospy.logdebug("[trt_yolo_rs]: Number of cameras", self.num_cameras)
         rospy.logdebug("[trt_yolo_ros] parameters read")
 
     @staticmethod
@@ -85,7 +85,7 @@ class YOLORos(object):
 
     def _image_callback(self, msg):
         """ Main callback which is saving the last received image """
-        if msg.header != None:
+        if msg.header is not None:
             self.msg_queue.put(msg)
             rospy.logdebug("[trt_yolo_ros] image recieved")
             
@@ -120,11 +120,11 @@ class YOLORos(object):
             rospy.logdebug("Failed to convert image %s" , str(e))
         # Initialize detection results
         if current_image is not None:
+            rospy.logdebug("[trt_yolo_ros] processing frame")
             boxes, classes, scores, visualization = self.model(current_image)
             detection_results = BoundingBoxes()
             detection_results.header = current_msg.header
             detection_results.image_header = current_msg.header
-            rospy.logdebug("[trt_yolo_ros] processing frame")
             # construct message
             self._write_message(detection_results, boxes, scores, classes)
             # send message
@@ -134,5 +134,5 @@ class YOLORos(object):
                 if self.publish_image:
                     self._pub_viz.publish(self._bridge.cv2_to_imgmsg(visualization, "bgr8"))
             except CvBridgeError as e:
-                rospy.logdebug("Failed to convert image %s" , str(e))
+                rospy.logdebug("[trt_yolo_ros] Failed to convert image %s" , str(e))
 
