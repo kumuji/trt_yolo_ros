@@ -104,8 +104,8 @@ class YOLORos(object):
             detection_msg = BoundingBox()
             detection_msg.xmin = left
             detection_msg.xmax = right
-            detection_msg.ymin = bottom
-            detection_msg.ymax = top
+            detection_msg.ymin = top
+            detection_msg.ymax = bottom
             detection_msg.probability = score
             detection_msg.Class = category
             detection_results.bounding_boxes.append(detection_msg)
