@@ -10,6 +10,7 @@ from utils import timeit_ros
 
 import Queue as queue
 
+
 class YOLORos(object):
     def __init__(self):
         self._bridge = CvBridge()
@@ -26,7 +27,7 @@ class YOLORos(object):
             show_image=self.publish_image,
         )
         self._init_topics()
-        self.msg_queue = queue.Queue(maxsize = 5)
+        self.msg_queue = queue.Queue(maxsize=5)
         rospy.loginfo("[trt_yolo_ros] loaded and ready")
 
     def _read_params(self):
@@ -77,10 +78,14 @@ class YOLORos(object):
         )
         # Image Subscriber
         for i in range(self.num_cameras):
-            topic, queue_size = self._read_subscriber_param("image" + str(i)) 
+            topic, queue_size = self._read_subscriber_param("image" + str(i))
             self._image_sub = rospy.Subscriber(
-                topic, Image, self._image_callback, queue_size=queue_size, buff_size=2 ** 24
-        )
+                topic,
+                Image,
+                self._image_callback,
+                queue_size=queue_size,
+                buff_size=2 ** 24,
+            )
         rospy.logdebug("[trt_yolo_ros] publishers and subsribers initialized")
 
     def _image_callback(self, msg):
@@ -88,7 +93,7 @@ class YOLORos(object):
         if msg.header is not None:
             self.msg_queue.put(msg)
             rospy.logdebug("[trt_yolo_ros] image recieved")
-            
+
     def _write_message(self, detection_results, boxes, scores, classes):
         """ populate output message with input header and bounding boxes information """
         if boxes is None:
@@ -117,7 +122,7 @@ class YOLORos(object):
             current_image = self._bridge.imgmsg_to_cv2(current_msg, "bgr8")
             rospy.logdebug("[trt_yolo_ros] image converted for processing")
         except CvBridgeError as e:
-            rospy.logdebug("Failed to convert image %s" , str(e))
+            rospy.logdebug("Failed to convert image %s", str(e))
         # Initialize detection results
         if current_image is not None:
             rospy.logdebug("[trt_yolo_ros] processing frame")
@@ -132,7 +137,9 @@ class YOLORos(object):
                 rospy.logdebug("[trt_yolo_ros] publishing")
                 self._pub.publish(detection_results)
                 if self.publish_image:
-                    self._pub_viz.publish(self._bridge.cv2_to_imgmsg(visualization, "bgr8"))
+                    self._pub_viz.publish(
+                        self._bridge.cv2_to_imgmsg(visualization, "bgr8")
+                    )
             except CvBridgeError as e:
-                rospy.logdebug("[trt_yolo_ros] Failed to convert image %s" , str(e))
+                rospy.logdebug("[trt_yolo_ros] Failed to convert image %s", str(e))
 
