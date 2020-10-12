@@ -5,6 +5,8 @@ So, it is faster on devices like jetson nano, rtx2080, tx2 or xavier.
 
 And it is easier to maintain because fully written in python.
 
+Works only with `tensorrt v6`, for jetsons it means `jeptack<=4.2.1`
+
 ---
 ## Installation
 First you need to install `tensorrt` and `opencv-python`. Those are platform specific and a bit tricky to isntall, so I didn't put those in requirements.txt.
@@ -33,7 +35,7 @@ $ python -m pip install -r requirements.txt
 
 ## Performance
 
-You should expect performance for one processed image around the numbers in the table. I checked forums and some users said you can get better numbers if you will switch to `INT8` precision and if you will use `opencv3.8` on jetsons. If the numbers are not good enough check those ideas first. Probably I will try it out later if you are interested. But the numbers you see is as low as you can get with `FP16`.
+You should expect performance for one processed image around the numbers in the table. I checked forums and some users said you can get better numbers if you will switch to `INT8` precision and if you will use `opencv3.8` on jetsons. If the numbers are not good enough check those ideas first. Probably I will try it out later if you are interested.
 
 Also, you can check runtime yourself, a message is published with debug flag.
 
